@@ -10,7 +10,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ui-server")
 
-app = FastAPI(title="RapidX AI Dashboard")
+app = FastAPI(title="BoldFlow AI Voice Agent — Dashboard")
 
 CONFIG_FILE = "config.json"
 
@@ -24,18 +24,22 @@ def read_config():
         return config.get(key) if config.get(key) else os.getenv(env_key, default)
 
     return {
-        "first_line": get_val("first_line", "FIRST_LINE", "Namaste! This is Aryan from RapidX AI — we help businesses automate with AI. Hmm, may I ask what kind of business you run?"),
+        "first_line": get_val("first_line", "FIRST_LINE", "Hello! Welcome to BoldFlow Labs. How can I assist you with your appointment booking today?"),
         "agent_instructions": get_val("agent_instructions", "AGENT_INSTRUCTIONS", ""),
-        "stt_min_endpointing_delay": float(get_val("stt_min_endpointing_delay", "STT_MIN_ENDPOINTING_DELAY", 0.6)),
-        "llm_model": get_val("llm_model", "LLM_MODEL", "gpt-4o-mini"),
-        "tts_voice": get_val("tts_voice", "TTS_VOICE", "kavya"),
-        "tts_language": get_val("tts_language", "TTS_LANGUAGE", "hi-IN"),
+        "stt_min_endpointing_delay": float(get_val("stt_min_endpointing_delay", "STT_MIN_ENDPOINTING_DELAY", 0.05)),
+        "llm_model": get_val("llm_model", "LLM_MODEL", "gemini-2.5-flash"),
+        "tts_voice": get_val("tts_voice", "TTS_VOICE", "Aoede"),
+        "tts_language": get_val("tts_language", "TTS_LANGUAGE", "en-US"),
         "livekit_url": get_val("livekit_url", "LIVEKIT_URL", ""),
         "sip_trunk_id": get_val("sip_trunk_id", "SIP_TRUNK_ID", ""),
         "livekit_api_key": get_val("livekit_api_key", "LIVEKIT_API_KEY", ""),
         "livekit_api_secret": get_val("livekit_api_secret", "LIVEKIT_API_SECRET", ""),
-        "openai_api_key": get_val("openai_api_key", "OPENAI_API_KEY", ""),
-        "sarvam_api_key": get_val("sarvam_api_key", "SARVAM_API_KEY", ""),
+        "google_api_key": get_val("google_api_key", "GOOGLE_API_KEY", ""),
+        "telnyx_api_key": get_val("telnyx_api_key", "TELNYX_API_KEY", ""),
+        "telnyx_connection_id": get_val("telnyx_connection_id", "TELNYX_CONNECTION_ID", ""),
+        "telnyx_sip_trunk_id": get_val("telnyx_sip_trunk_id", "TELNYX_SIP_TRUNK_ID", ""),
+        "telnyx_outbound_number": get_val("telnyx_outbound_number", "TELNYX_OUTBOUND_NUMBER", ""),
+        "deployment_market": get_val("deployment_market", "DEPLOYMENT_MARKET", "US"),
         "cal_api_key": get_val("cal_api_key", "CAL_API_KEY", ""),
         "cal_event_type_id": get_val("cal_event_type_id", "CAL_EVENT_TYPE_ID", ""),
         "telegram_bot_token": get_val("telegram_bot_token", "TELEGRAM_BOT_TOKEN", ""),
@@ -82,7 +86,6 @@ async def api_get_transcript(log_id: str):
     config = read_config()
     os.environ["SUPABASE_URL"] = config.get("supabase_url", "")
     os.environ["SUPABASE_KEY"] = config.get("supabase_key", "")
-    import db
     try:
         from supabase import create_client
         supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
@@ -139,7 +142,6 @@ async def api_get_contacts():
             .execute()
         rows = res.data or []
 
-        # Deduplicate by phone number
         contacts: dict = {}
         for r in rows:
             phone = r.get("phone_number") or "unknown"
@@ -153,10 +155,8 @@ async def api_get_contacts():
                 }
             c = contacts[phone]
             c["total_calls"] += 1
-            # Use the most recent non-empty name
             if not c["caller_name"] and r.get("caller_name"):
                 c["caller_name"] = r["caller_name"]
-            # Mark booked if any call had a confirmed booking
             if r.get("summary") and "Confirmed" in r.get("summary", ""):
                 c["is_booked"] = True
 
@@ -165,13 +165,12 @@ async def api_get_contacts():
         logger.error(f"Error fetching contacts: {e}")
         return []
 
-
 DEMO_PAGE_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI Voice Demo — RapidX AI</title>
+  <title>AI Voice Demo — BoldFlow Labs</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
@@ -195,8 +194,8 @@ DEMO_PAGE_HTML = """<!DOCTYPE html>
 <body>
   <div class="card">
     <div class="avatar">🎙</div>
-    <h1>Talk to Aryan</h1>
-    <div class="sub">AI-powered multilingual consultant · RapidX AI</div>
+    <h1>Talk to BoldFlow Agent</h1>
+    <div class="sub">AI-powered voice agent · BoldFlow Labs</div>
     <button class="btn btn-start" id="startBtn" onclick="startCall()">📞 Start Demo Call</button>
     <button class="btn btn-end" id="endBtn" onclick="endCall()">📵 End Call</button>
     <div id="status">Click to start a live voice demo</div>
@@ -247,7 +246,6 @@ DEMO_PAGE_HTML = """<!DOCTYPE html>
   </script>
 </body>
 </html>"""
-
 
 # ── Outbound Calls ────────────────────────────────────────────────────────────
 
@@ -336,7 +334,6 @@ async def api_demo_token():
             .with_ttl(3600) \
             .to_jwt()
 
-        # Also dispatch the agent into the room
         import json as _json
         from livekit import api as lkapi
         lk = lkapi.LiveKitAPI(url=livekit_url, api_key=api_key, api_secret=api_secret)
@@ -358,15 +355,12 @@ async def get_demo_page():
     """Browser-based demo call page using LiveKit JS SDK."""
     return HTMLResponse(content=DEMO_PAGE_HTML)
 
-
-# ── Prometheus Metrics (#40) ──────────────────────────────────────────────────
+# ── Prometheus Metrics ──────────────────────────────────────────────────────────
 try:
-    from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST, REGISTRY, CollectorRegistry
+    from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST, REGISTRY
     from fastapi.responses import Response as _Resp
 
     def _safe_metric(metric_cls, name, *args, **kwargs):
-        """Create a metric, unregistering any stale duplicate first."""
-        # Try to unregister any existing collector with the same name
         try:
             existing = REGISTRY._names_to_collectors.get(name)
             if existing is not None:
@@ -383,12 +377,10 @@ try:
 
     @app.get("/metrics", include_in_schema=False)
     def metrics():
-        """Prometheus metrics scrape endpoint."""
         return _Resp(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     @app.post("/internal/record-call", include_in_schema=False)
     async def record_call_metric(request: Request):
-        """Called by agent.py at shutdown to update Prometheus counters."""
         data = await request.json()
         _voice_calls_total.inc()
         if data.get("booked"):
@@ -404,34 +396,81 @@ except ImportError:
 
 # ── Main Dashboard HTML ────────────────────────────────────────────────────────
 
-
 @app.get("/health")
 def health_check():
-    """Health check endpoint for Coolify monitoring (#22)."""
+    """Health check endpoint for Coolify monitoring."""
     return {
         "status": "ok",
         "timestamp": __import__("datetime").datetime.utcnow().isoformat(),
-        "service": "rapidx-ai-voice-agent",
+        "service": "boldflow-ai-voice-agent",
     }
 
 @app.get("/", response_class=HTMLResponse)
 async def get_dashboard():
     config = read_config()
 
-    def sel(key, val):
-        return "selected" if config.get(key) == val else ""
+    # For llm_model
+    llm_opts = ""
+    for val, label in [
+        ("gemini-2.5-flash", "gemini-2.5-flash — Fast & Capable (Default)"),
+        ("gemini-2.5-flash-native-audio", "gemini-2.5-flash-native-audio — Native Audio"),
+        ("gemini-2.0-flash-exp", "gemini-2.0-flash-exp — Experimental Live")
+    ]:
+        selected = "selected" if config.get("llm_model") == val else ""
+        llm_opts += f'<option value="{val}" {selected}>{label}</option>\n'
 
-    html = f"""<!DOCTYPE html>
+    # For tts_voice
+    voice_opts = ""
+    for val, label in [
+        ("Aoede", "Aoede — Female, Clear (Default)"),
+        ("Kore", "Kore — Female, Pleasant"),
+        ("Puck", "Puck — Male, Energetic"),
+        ("Charon", "Charon — Male, Calm"),
+        ("Fenrir", "Fenrir — Male, Deep")
+    ]:
+        selected = "selected" if config.get("tts_voice") == val else ""
+        voice_opts += f'<option value="{val}" {selected}>{label}</option>\n'
+
+    # For tts_language
+    lang_opts = ""
+    for val, label in [
+        ("en-US", "English US (en-US)"),
+        ("en-IN", "English India (en-IN)"),
+        ("hi-IN", "Hindi (hi-IN)"),
+        ("ta-IN", "Tamil (ta-IN)"),
+        ("te-IN", "Telugu (te-IN)"),
+        ("kn-IN", "Kannada (kn-IN)"),
+        ("ml-IN", "Malayalam (ml-IN)"),
+        ("mr-IN", "Marathi (mr-IN)"),
+        ("gu-IN", "Gujarati (gu-IN)"),
+        ("bn-IN", "Bengali (bn-IN)")
+    ]:
+        selected = "selected" if config.get("tts_language") == val else ""
+        lang_opts += f'<option value="{val}" {selected}>{label}</option>\n'
+
+    # For deployment_market
+    market_opts = ""
+    for val, label in [
+        ("US", "United States (US)"),
+        ("UK", "United Kingdom (UK)"),
+        ("CA", "Canada (CA)"),
+        ("AU", "Australia (AU)"),
+        ("AE", "Dubai/UAE (AE)")
+    ]:
+        selected = "selected" if config.get("deployment_market") == val else ""
+        market_opts += f'<option value="{val}" {selected}>{label}</option>\n'
+
+    html = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI Voice Agent — Dashboard</title>
+  <title>BoldFlow AI Voice Agent — Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    :root {{
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
       --bg: #0f1117;
       --sidebar: #161b27;
       --card: #1c2333;
@@ -444,160 +483,160 @@ async def get_dashboard():
       --red: #ef4444;
       --yellow: #f59e0b;
       --sidebar-w: 240px;
-    }}
-    body {{ font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }}
+    }
+    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
 
     /* ── Sidebar ── */
-    #sidebar {{
+    #sidebar {
       width: var(--sidebar-w); min-width: var(--sidebar-w);
       background: var(--sidebar); border-right: 1px solid var(--border);
       display: flex; flex-direction: column; padding: 24px 0;
       position: relative; z-index: 10;
-    }}
-    .sidebar-brand {{
+    }
+    .sidebar-brand {
       padding: 0 20px 24px;
       border-bottom: 1px solid var(--border);
       display: flex; align-items: center; gap: 10px;
-    }}
-    .sidebar-brand .logo {{
+    }
+    .sidebar-brand .logo {
       width: 32px; height: 32px; background: var(--accent);
       border-radius: 8px; display: flex; align-items: center; justify-content: center;
       font-size: 16px;
-    }}
-    .sidebar-brand .brand-text {{ font-weight: 700; font-size: 14px; line-height: 1.2; }}
-    .sidebar-brand .brand-sub {{ font-size: 10px; color: var(--muted); }}
-    .sidebar-nav {{ padding: 16px 0; flex: 1; }}
-    .nav-section {{ padding: 8px 16px 4px; font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }}
-    .nav-item {{
+    }
+    .sidebar-brand .brand-text { font-weight: 700; font-size: 14px; line-height: 1.2; }
+    .sidebar-brand .brand-sub { font-size: 10px; color: var(--muted); }
+    .sidebar-nav { padding: 16px 0; flex: 1; }
+    .nav-section { padding: 8px 16px 4px; font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    .nav-item {
       display: flex; align-items: center; gap: 10px;
       padding: 10px 20px; cursor: pointer; font-size: 13.5px; font-weight: 500;
       color: var(--muted); border-left: 3px solid transparent;
       transition: all 0.15s; user-select: none;
-    }}
-    .nav-item:hover {{ color: var(--text); background: rgba(255,255,255,0.04); }}
-    .nav-item.active {{ color: var(--accent); border-left-color: var(--accent); background: var(--accent-glow); }}
-    .nav-item .icon {{ font-size: 16px; width: 20px; text-align: center; }}
-    .sidebar-footer {{
+    }
+    .nav-item:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+    .nav-item.active { color: var(--accent); border-left-color: var(--accent); background: var(--accent-glow); }
+    .nav-item .icon { font-size: 16px; width: 20px; text-align: center; }
+    .sidebar-footer {
       padding: 16px 20px;
       border-top: 1px solid var(--border);
       font-size: 11px; color: var(--muted);
-    }}
-    .status-dot {{
+    }
+    .status-dot {
       display: inline-block; width: 7px; height: 7px; border-radius: 50%;
       background: var(--green); margin-right: 6px; box-shadow: 0 0 6px var(--green);
-    }}
+    }
 
     /* ── Main ── */
-    #main {{ flex: 1; overflow-y: auto; background: var(--bg); }}
-    .page {{ display: none; padding: 32px 36px; min-height: 100%; }}
-    .page.active {{ display: block; }}
-    .page-header {{ margin-bottom: 28px; }}
-    .page-title {{ font-size: 22px; font-weight: 700; }}
-    .page-sub {{ font-size: 13px; color: var(--muted); margin-top: 4px; }}
+    #main { flex: 1; overflow-y: auto; background: var(--bg); }
+    .page { display: none; padding: 32px 36px; min-height: 100%; }
+    .page.active { display: block; }
+    .page-header { margin-bottom: 28px; }
+    .page-title { font-size: 22px; font-weight: 700; }
+    .page-sub { font-size: 13px; color: var(--muted); margin-top: 4px; }
 
     /* ── Cards ── */
-    .card {{
+    .card {
       background: var(--card); border: 1px solid var(--border);
       border-radius: 12px; padding: 20px;
-    }}
-    .stat-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }}
-    .stat-card {{ background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }}
-    .stat-label {{ font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }}
-    .stat-value {{ font-size: 28px; font-weight: 700; margin-top: 8px; }}
-    .stat-sub {{ font-size: 12px; color: var(--muted); margin-top: 4px; }}
+    }
+    .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+    .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    .stat-label { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+    .stat-value { font-size: 28px; font-weight: 700; margin-top: 8px; }
+    .stat-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
     /* ── Table ── */
-    .table-wrap {{ background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-    thead th {{ padding: 12px 16px; text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--border); }}
-    tbody td {{ padding: 13px 16px; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; }}
-    tbody tr:last-child td {{ border-bottom: none; }}
-    tbody tr:hover {{ background: rgba(255,255,255,0.025); }}
-    .badge {{ display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }}
-    .badge-green {{ background: rgba(34,197,94,0.12); color: var(--green); }}
-    .badge-gray {{ background: rgba(255,255,255,0.07); color: var(--muted); }}
-    .badge-yellow {{ background: rgba(245,158,11,0.12); color: var(--yellow); }}
+    .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th { padding: 12px 16px; text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--border); }
+    tbody td { padding: 13px 16px; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: rgba(255,255,255,0.025); }
+    .badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .badge-green { background: rgba(34,197,94,0.12); color: var(--green); }
+    .badge-gray { background: rgba(255,255,255,0.07); color: var(--muted); }
+    .badge-yellow { background: rgba(245,158,11,0.12); color: var(--yellow); }
 
     /* ── Forms ── */
-    label {{ display: block; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }}
-    input[type=text], input[type=password], input[type=number], select, textarea {{
+    label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    input[type=text], input[type=password], input[type=number], select, textarea {
       width: 100%; background: var(--bg); border: 1px solid var(--border);
       border-radius: 8px; padding: 10px 12px; color: var(--text); font-family: inherit;
       font-size: 13.5px; outline: none; transition: border-color 0.15s;
-    }}
-    input:focus, select:focus, textarea:focus {{ border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }}
-    textarea {{ font-family: 'JetBrains Mono', 'Fira Code', monospace; resize: vertical; }}
-    .form-group {{ margin-bottom: 20px; }}
-    .form-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
-    .hint {{ font-size: 11.5px; color: var(--muted); margin-top: 5px; }}
-    .section-card {{ background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 20px; }}
-    .section-title {{ font-size: 14px; font-weight: 600; margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }}
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+    textarea { font-family: 'JetBrains Mono', 'Fira Code', monospace; resize: vertical; }
+    .form-group { margin-bottom: 20px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .hint { font-size: 11.5px; color: var(--muted); margin-top: 5px; }
+    .section-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+    .section-title { font-size: 14px; font-weight: 600; margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
 
     /* ── Buttons ── */
-    .btn {{ display: inline-flex; align-items: center; gap: 6px; padding: 9px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: all 0.15s; }}
-    .btn-primary {{ background: var(--accent); color: #fff; }}
-    .btn-primary:hover {{ background: #5a52e0; box-shadow: 0 0 16px var(--accent-glow); }}
-    .btn-ghost {{ background: transparent; border: 1px solid var(--border); color: var(--muted); }}
-    .btn-ghost:hover {{ border-color: var(--accent); color: var(--accent); }}
-    .btn-sm {{ padding: 5px 12px; font-size: 12px; }}
-    .save-bar {{
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: all 0.15s; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #5a52e0; box-shadow: 0 0 16px var(--accent-glow); }
+    .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-sm { padding: 5px 12px; font-size: 12px; }
+    .save-bar {
       position: sticky; bottom: 0; left: 0; right: 0;
       background: rgba(22,27,39,0.95); backdrop-filter: blur(12px);
       border-top: 1px solid var(--border);
       padding: 14px 36px; display: flex; align-items: center; justify-content: space-between; z-index: 20;
-    }}
-    .save-status {{ font-size: 13px; font-weight: 500; color: var(--green); opacity: 0; transition: opacity 0.3s; }}
+    }
+    .save-status { font-size: 13px; font-weight: 500; color: var(--green); opacity: 0; transition: opacity 0.3s; }
 
     /* ── Calendar ── */
-    .cal-header {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }}
-    .cal-grid {{ display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }}
-    .cal-day-name {{ text-align: center; font-size: 11px; color: var(--muted); font-weight: 600; padding: 8px 0; text-transform: uppercase; letter-spacing: 0.06em; }}
-    .cal-cell {{
+    .cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+    .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+    .cal-day-name { text-align: center; font-size: 11px; color: var(--muted); font-weight: 600; padding: 8px 0; text-transform: uppercase; letter-spacing: 0.06em; }
+    .cal-cell {
       min-height: 80px; background: var(--card); border: 1px solid var(--border);
       border-radius: 10px; padding: 10px; cursor: pointer; transition: all 0.18s; position: relative;
-    }}
-    .cal-cell:hover {{ border-color: var(--accent); background: var(--accent-glow); transform: scale(1.03); box-shadow: 0 4px 20px rgba(108,99,255,0.15); }}
-    .cal-cell.today {{ border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }}
-    .cal-cell.other-month {{ opacity: 0.3; }}
-    .cal-num {{ font-size: 13px; font-weight: 700; }}
-    .cal-dot {{ width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-top: 6px; box-shadow: 0 0 6px var(--accent); }}
-    .cal-booking-count {{ font-size: 10px; color: var(--accent); font-weight: 600; margin-top: 3px; }}
-    .day-panel {{ background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-top: 20px; display: none; }}
-    .day-panel.show {{ display: block; animation: fadeIn 0.2s ease; }}
-    .booking-item {{ padding: 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; transition: border-color 0.15s; }}
-    .booking-item:hover {{ border-color: var(--accent); }}
-    .booking-item:last-child {{ margin-bottom: 0; }}
+    }
+    .cal-cell:hover { border-color: var(--accent); background: var(--accent-glow); transform: scale(1.03); box-shadow: 0 4px 20px rgba(108,99,255,0.15); }
+    .cal-cell.today { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+    .cal-cell.other-month { opacity: 0.3; }
+    .cal-num { font-size: 13px; font-weight: 700; }
+    .cal-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-top: 6px; box-shadow: 0 0 6px var(--accent); }
+    .cal-booking-count { font-size: 10px; color: var(--accent); font-weight: 600; margin-top: 3px; }
+    .day-panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-top: 20px; display: none; }
+    .day-panel.show { display: block; animation: fadeIn 0.2s ease; }
+    .booking-item { padding: 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; transition: border-color 0.15s; }
+    .booking-item:hover { border-color: var(--accent); }
+    .booking-item:last-child { margin-bottom: 0; }
 
     /* ── Modal ── */
-    .modal-overlay {{
+    .modal-overlay {
       display: none; position: fixed; inset: 0;
       background: rgba(0,0,0,0.7); backdrop-filter: blur(6px);
       z-index: 1000; align-items: center; justify-content: center;
-    }}
-    .modal-overlay.open {{ display: flex; animation: fadeIn 0.2s ease; }}
-    .modal-box {{
+    }
+    .modal-overlay.open { display: flex; animation: fadeIn 0.2s ease; }
+    .modal-box {
       background: var(--card); border: 1px solid var(--border);
       border-radius: 16px; padding: 28px; min-width: 480px; max-width: 600px; width: 90%;
       box-shadow: 0 24px 60px rgba(0,0,0,0.5);
       animation: slideUp 0.25s ease;
-    }}
-    .modal-title {{ font-size: 18px; font-weight: 700; margin-bottom: 6px; }}
-    .modal-sub {{ font-size: 12px; color: var(--muted); margin-bottom: 20px; }}
-    .modal-close {{
+    }
+    .modal-title { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+    .modal-sub { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
+    .modal-close {
       position: absolute; top: 20px; right: 24px;
       background: none; border: none; color: var(--muted);
       font-size: 20px; cursor: pointer; line-height: 1;
-    }}
-    .modal-close:hover {{ color: var(--text); }}
-    @keyframes fadeIn {{ from {{ opacity:0 }} to {{ opacity:1 }} }}
-    @keyframes slideUp {{ from {{ transform:translateY(20px); opacity:0 }} to {{ transform:translateY(0); opacity:1 }} }}
+    }
+    .modal-close:hover { color: var(--text); }
+    @keyframes fadeIn { from { opacity:0 } to { opacity:1 } }
+    @keyframes slideUp { from { transform:translateY(20px); opacity:0 } to { transform:translateY(0); opacity:1 } }
 
     /* ── Premium extras ── */
-    .stat-card {{ transition: transform 0.15s, box-shadow 0.15s; }}
-    .stat-card:hover {{ transform: translateY(-3px); box-shadow: 0 8px 30px rgba(108,99,255,0.12); }}
-    .stat-accent {{ color: var(--accent); }}
-    .pulse {{ animation: pulse 2s infinite; }}
-    @keyframes pulse {{ 0%,100% {{ box-shadow: 0 0 6px var(--green); }} 50% {{ box-shadow: 0 0 14px var(--green); }} }}
+    .stat-card { transition: transform 0.15s, box-shadow 0.15s; }
+    .stat-card:hover { transform: translateY(-3px); box-shadow: 0 8px 30px rgba(108,99,255,0.12); }
+    .stat-accent { color: var(--accent); }
+    .pulse { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { box-shadow: 0 0 6px var(--green); } 50% { box-shadow: 0 0 14px var(--green); } }
   </style>
 </head>
 <body>
@@ -625,7 +664,7 @@ async def get_dashboard():
     </div>
     <div>
       <div class="brand-text">Voice Agent</div>
-      <div class="brand-sub">RapidX AI</div>
+      <div class="brand-sub">BoldFlow Labs</div>
     </div>
   </div>
   <div class="sidebar-nav">
@@ -702,13 +741,13 @@ async def get_dashboard():
   <div id="page-agent" class="page">
     <div class="page-header">
       <div class="page-title">Agent Settings</div>
-      <div class="page-sub">Configure AI personality, opening line, and sensitivity</div>
+      <div class="page-sub">Configure AI personality, opening greeting, and sensitivity</div>
     </div>
     <div class="section-card">
       <div class="section-title">Opening Greeting</div>
       <div class="form-group">
         <label>First Line (What the agent says when a call connects)</label>
-        <input type="text" id="first_line" value="{config.get('first_line', '')}" placeholder="Namaste! This is Aryan from RapidX AI...">
+        <input type="text" id="first_line" value="VAL_FIRST_LINE" placeholder="Hello! Welcome to BoldFlow Labs...">
         <div class="hint">This is the very first thing the agent says. Keep it concise and warm.</div>
       </div>
     </div>
@@ -716,7 +755,7 @@ async def get_dashboard():
       <div class="section-title">System Prompt</div>
       <div class="form-group">
         <label>Master System Prompt</label>
-        <textarea id="agent_instructions" rows="16" placeholder="Enter the AI's full personality and instructions...">{config.get('agent_instructions', '')}</textarea>
+        <textarea id="agent_instructions" rows="16" placeholder="Enter the AI's full personality and instructions...">VAL_AGENT_INSTRUCTIONS</textarea>
         <div class="hint">Date and time context are injected automatically. Do not hardcode today's date.</div>
       </div>
     </div>
@@ -724,8 +763,8 @@ async def get_dashboard():
       <div class="section-title">Listening Sensitivity</div>
       <div class="form-group" style="max-width:220px;">
         <label>Endpointing Delay (seconds)</label>
-        <input type="number" id="stt_min_endpointing_delay" step="0.05" min="0.1" max="3.0" value="{config.get('stt_min_endpointing_delay', 0.6)}">
-        <div class="hint">Seconds the AI waits after silence before responding. Default: 0.6</div>
+        <input type="number" id="stt_min_endpointing_delay" step="0.05" min="0.01" max="3.0" value="VAL_STT_MIN_DELAY">
+        <div class="hint">Seconds the AI waits after silence before responding. Default: 0.05</div>
       </div>
     </div>
     <div class="save-bar">
@@ -738,55 +777,30 @@ async def get_dashboard():
   <div id="page-models" class="page">
     <div class="page-header">
       <div class="page-title">Models & Voice</div>
-      <div class="page-sub">Select the LLM brain and TTS voice persona</div>
+      <div class="page-sub">Select the Gemini Live model and voice persona</div>
     </div>
     <div class="section-card">
-      <div class="section-title">Language Model (LLM)</div>
+      <div class="section-title">Language Model (Gemini Live API)</div>
       <div class="form-group" style="max-width:360px;">
-        <label>OpenAI Model</label>
+        <label>Gemini Model</label>
         <select id="llm_model">
-          <option value="gpt-4o-mini" {sel('llm_model','gpt-4o-mini')}>gpt-4o-mini — Fast &amp; Cheap (Default)</option>
-          <option value="gpt-4o" {sel('llm_model','gpt-4o')}>gpt-4o — Balanced</option>
-          <option value="gpt-4.1" {sel('llm_model','gpt-4.1')}>gpt-4.1 — Latest (Recommended)</option>
-          <option value="gpt-4.1-mini" {sel('llm_model','gpt-4.1-mini')}>gpt-4.1-mini — Fast &amp; Latest</option>
-          <option value="gpt-4.5-preview" {sel('llm_model','gpt-4.5-preview')}>gpt-4.5-preview — Most Capable</option>
-          <option value="o4-mini" {sel('llm_model','o4-mini')}>o4-mini — Reasoning, Fast</option>
-          <option value="o3" {sel('llm_model','o3')}>o3 — Reasoning, Best</option>
-          <option value="gpt-4-turbo" {sel('llm_model','gpt-4-turbo')}>gpt-4-turbo — Legacy</option>
-          <option value="gpt-3.5-turbo" {sel('llm_model','gpt-3.5-turbo')}>gpt-3.5-turbo — Cheapest</option>
+          LLM_MODEL_OPTIONS
         </select>
       </div>
     </div>
     <div class="section-card">
-      <div class="section-title">Voice Synthesis (Sarvam bulbul:v3)</div>
+      <div class="section-title">Voice Synthesis (Gemini Native Live Voice)</div>
       <div class="form-row" style="max-width:720px;">
         <div class="form-group">
           <label>Speaker Voice</label>
           <select id="tts_voice">
-            <option value="kavya" {sel('tts_voice','kavya')}>Kavya — Female, Friendly</option>
-            <option value="rohan" {sel('tts_voice','rohan')}>Rohan — Male, Balanced</option>
-            <option value="priya" {sel('tts_voice','priya')}>Priya — Female, Warm</option>
-            <option value="shubh" {sel('tts_voice','shubh')}>Shubh — Male, Formal</option>
-            <option value="shreya" {sel('tts_voice','shreya')}>Shreya — Female, Clear</option>
-            <option value="ritu" {sel('tts_voice','ritu')}>Ritu — Female, Soft</option>
-            <option value="rahul" {sel('tts_voice','rahul')}>Rahul — Male, Deep</option>
-            <option value="amit" {sel('tts_voice','amit')}>Amit — Male, Casual</option>
-            <option value="neha" {sel('tts_voice','neha')}>Neha — Female, Energetic</option>
-            <option value="dev" {sel('tts_voice','dev')}>Dev — Male, Professional</option>
+            TTS_VOICE_OPTIONS
           </select>
         </div>
         <div class="form-group">
           <label>Language</label>
           <select id="tts_language">
-            <option value="hi-IN" {sel('tts_language','hi-IN')}>Hindi (hi-IN)</option>
-            <option value="en-IN" {sel('tts_language','en-IN')}>English India (en-IN)</option>
-            <option value="ta-IN" {sel('tts_language','ta-IN')}>Tamil (ta-IN)</option>
-            <option value="te-IN" {sel('tts_language','te-IN')}>Telugu (te-IN)</option>
-            <option value="kn-IN" {sel('tts_language','kn-IN')}>Kannada (kn-IN)</option>
-            <option value="ml-IN" {sel('tts_language','ml-IN')}>Malayalam (ml-IN)</option>
-            <option value="mr-IN" {sel('tts_language','mr-IN')}>Marathi (mr-IN)</option>
-            <option value="gu-IN" {sel('tts_language','gu-IN')}>Gujarati (gu-IN)</option>
-            <option value="bn-IN" {sel('tts_language','bn-IN')}>Bengali (bn-IN)</option>
+            TTS_LANGUAGE_OPTIONS
           </select>
         </div>
       </div>
@@ -798,6 +812,85 @@ async def get_dashboard():
   </div>
 
   <!-- ── API Credentials ── -->
+  <div id="page-credentials" class="page">
+    <div class="page-header">
+      <div class="page-title">API Credentials</div>
+      <div class="page-sub">Credentials here override .env values at runtime. Keep this secure.</div>
+    </div>
+    <div class="section-card">
+      <div class="section-title">LiveKit Configuration</div>
+      <div class="form-row">
+        <div class="form-group"><label>LiveKit URL</label><input type="text" id="livekit_url" value="VAL_LIVEKIT_URL"></div>
+        <div class="form-group"><label>LiveKit API Key</label><input type="password" id="livekit_api_key" value="VAL_LIVEKIT_API_KEY"></div>
+        <div class="form-group"><label>LiveKit API Secret</label><input type="password" id="livekit_api_secret" value="VAL_LIVEKIT_API_SECRET"></div>
+      </div>
+    </div>
+    <div class="section-card">
+      <div class="section-title">Telnyx Telephony & Market</div>
+      <div class="form-row">
+        <div class="form-group"><label>Telnyx API Key</label><input type="password" id="telnyx_api_key" value="VAL_TELNYX_API_KEY"></div>
+        <div class="form-group"><label>Telnyx Connection ID</label><input type="text" id="telnyx_connection_id" value="VAL_TELNYX_CONNECTION_ID"></div>
+        <div class="form-group"><label>Telnyx SIP Trunk ID (Outbound)</label><input type="text" id="telnyx_sip_trunk_id" value="VAL_TELNYX_SIP_TRUNK_ID"></div>
+        <div class="form-group"><label>Telnyx Outbound Number</label><input type="text" id="telnyx_outbound_number" value="VAL_TELNYX_OUTBOUND_NUMBER"></div>
+        <div class="form-group">
+          <label>Deployment Market</label>
+          <select id="deployment_market">
+            DEPLOYMENT_MARKET_OPTIONS
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="section-card">
+      <div class="section-title">AI Providers</div>
+      <div class="form-row">
+        <div class="form-group"><label>Google Gemini API Key</label><input type="password" id="google_api_key" value="VAL_GOOGLE_API_KEY"></div>
+      </div>
+    </div>
+    <div class="section-card">
+      <div class="section-title">Integrations</div>
+      <div class="form-row">
+        <div class="form-group"><label>Cal.com API Key</label><input type="password" id="cal_api_key" value="VAL_CAL_API_KEY"></div>
+        <div class="form-group"><label>Cal.com Event Type ID</label><input type="text" id="cal_event_type_id" value="VAL_CAL_EVENT_TYPE_ID"></div>
+        <div class="form-group"><label>Telegram Bot Token</label><input type="password" id="telegram_bot_token" value="VAL_TELEGRAM_BOT_TOKEN"></div>
+        <div class="form-group"><label>Telegram Chat ID</label><input type="text" id="telegram_chat_id" value="VAL_TELEGRAM_CHAT_ID"></div>
+        <div class="form-group"><label>Supabase URL</label><input type="text" id="supabase_url" value="VAL_SUPABASE_URL"></div>
+        <div class="form-group"><label>Supabase Anon Key</label><input type="password" id="supabase_key" value="VAL_SUPABASE_KEY"></div>
+      </div>
+    </div>
+    <div class="save-bar">
+      <span class="save-status" id="save-status-credentials">✅ Saved!</span>
+      <button class="btn btn-primary" onclick="saveConfig('credentials')">💾 Save Credentials</button>
+    </div>
+  </div>
+
+  <!-- ── Call Logs ── -->
+  <div id="page-logs" class="page">
+    <div class="page-header">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <div class="page-title">Call Logs</div>
+          <div class="page-sub">Full history of all incoming calls and transcripts</div>
+        </div>
+        <button class="btn btn-ghost" onclick="loadLogs()">↻ Refresh</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Date & Time</th>
+            <th>Phone</th>
+            <th>Duration</th>
+            <th>Status</th>
+            <th>Summary</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="logs-table-body"><tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted);">Click Refresh to load call logs</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- CRM Contacts Page -->
   <div id="page-crm" class="page">
     <div class="page-header">
@@ -845,7 +938,7 @@ async def get_dashboard():
         automatically replies in the same language for the rest of the call. 
         Ideal for showcasing the agent across different audiences.<br><br>
         Language changes take effect on the <strong style="color:var(--accent);">next incoming call</strong>. 
-        The TTS voice and language code are updated automatically.
+        The Gemini voice is updated automatically.
       </p>
     </div>
   </div>
@@ -861,8 +954,8 @@ async def get_dashboard():
         <div class="section-title">Single Call</div>
         <div class="form-group">
           <label>Phone Number (with country code)</label>
-          <input type="text" id="call-single-num" placeholder="+91XXXXXXXXXX" style="font-family:monospace;">
-          <div class="hint">Must start with + and country code e.g. +91</div>
+          <input type="text" id="call-single-num" placeholder="+1XXXXXXXXXX" style="font-family:monospace;">
+          <div class="hint">Must start with + and country code e.g. +1</div>
         </div>
         <button class="btn btn-primary" onclick="makeSingleCall()" style="width:100%;">📞 Call Now</button>
         <div id="single-call-status" style="margin-top:12px;font-size:13px;"></div>
@@ -871,7 +964,7 @@ async def get_dashboard():
         <div class="section-title">Bulk Call</div>
         <div class="form-group">
           <label>Phone Numbers (one per line)</label>
-          <textarea id="call-bulk-nums" rows="6" placeholder="+91XXXXXXXXXX&#10;+91YYYYYYYYYY&#10;+44ZZZZZZZZZ"></textarea>
+          <textarea id="call-bulk-nums" rows="6" placeholder="+1XXXXXXXXXX&#10;+44XXXXXXXXXX&#10;+61XXXXXXXXX"></textarea>
           <div class="hint">Each line is a separate call dispatched simultaneously</div>
         </div>
         <button class="btn btn-primary" onclick="makeBulkCall()" style="width:100%;">🚀 Call All Numbers</button>
@@ -912,86 +1005,20 @@ async def get_dashboard():
     </div>
   </div>
 
-    <div id="page-credentials" class="page">
-    <div class="page-header">
-      <div class="page-title">API Credentials</div>
-      <div class="page-sub">Credentials here override .env values at runtime. Never share this page.</div>
-    </div>
-    <div class="section-card">
-      <div class="section-title">LiveKit</div>
-      <div class="form-row">
-        <div class="form-group"><label>LiveKit URL</label><input type="text" id="livekit_url" value="{config.get('livekit_url', '')}"></div>
-        <div class="form-group"><label>SIP Trunk ID</label><input type="text" id="sip_trunk_id" value="{config.get('sip_trunk_id', '')}"></div>
-        <div class="form-group"><label>API Key</label><input type="password" id="livekit_api_key" value="{config.get('livekit_api_key', '')}"></div>
-        <div class="form-group"><label>API Secret</label><input type="password" id="livekit_api_secret" value="{config.get('livekit_api_secret', '')}"></div>
-      </div>
-    </div>
-    <div class="section-card">
-      <div class="section-title">AI Providers</div>
-      <div class="form-row">
-        <div class="form-group"><label>OpenAI API Key</label><input type="password" id="openai_api_key" value="{config.get('openai_api_key', '')}"></div>
-        <div class="form-group"><label>Sarvam API Key</label><input type="password" id="sarvam_api_key" value="{config.get('sarvam_api_key', '')}"></div>
-      </div>
-    </div>
-    <div class="section-card">
-      <div class="section-title">Integrations</div>
-      <div class="form-row">
-        <div class="form-group"><label>Cal.com API Key</label><input type="password" id="cal_api_key" value="{config.get('cal_api_key', '')}"></div>
-        <div class="form-group"><label>Cal.com Event Type ID</label><input type="text" id="cal_event_type_id" value="{config.get('cal_event_type_id', '')}"></div>
-        <div class="form-group"><label>Telegram Bot Token</label><input type="password" id="telegram_bot_token" value="{config.get('telegram_bot_token', '')}"></div>
-        <div class="form-group"><label>Telegram Chat ID</label><input type="text" id="telegram_chat_id" value="{config.get('telegram_chat_id', '')}"></div>
-        <div class="form-group"><label>Supabase URL</label><input type="text" id="supabase_url" value="{config.get('supabase_url', '')}"></div>
-        <div class="form-group"><label>Supabase Anon Key</label><input type="password" id="supabase_key" value="{config.get('supabase_key', '')}"></div>
-      </div>
-    </div>
-    <div class="save-bar">
-      <span class="save-status" id="save-status-credentials">✅ Saved!</span>
-      <button class="btn btn-primary" onclick="saveConfig('credentials')">💾 Save Credentials</button>
-    </div>
-  </div>
-
-  <!-- ── Call Logs ── -->
-  <div id="page-logs" class="page">
-    <div class="page-header">
-      <div style="display:flex;align-items:center;justify-content:space-between;">
-        <div>
-          <div class="page-title">Call Logs</div>
-          <div class="page-sub">Full history of all incoming calls and transcripts</div>
-        </div>
-        <button class="btn btn-ghost" onclick="loadLogs()">↻ Refresh</button>
-      </div>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Date & Time</th>
-            <th>Phone</th>
-            <th>Duration</th>
-            <th>Status</th>
-            <th>Summary</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="logs-table-body"><tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted);">Click Refresh to load call logs</td></tr></tbody>
-      </table>
-    </div>
-  </div>
-
 </div><!-- /main -->
 
 <script>
 // ── Navigation ──────────────────────────────────────────────────────────────
-function goTo(pageId, el) {{
+function goTo(pageId, el) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('page-' + pageId).classList.add('active');
   el.classList.add('active');
-}}
+}
 
 // ── Stats & Dashboard ───────────────────────────────────────────────────────
-async function loadDashboard() {{
-  try {{
+async function loadDashboard() {
+  try {
     const [stats, logs] = await Promise.all([
       fetch('/api/stats').then(r => r.json()),
       fetch('/api/logs').then(r => r.json())
@@ -1002,351 +1029,350 @@ async function loadDashboard() {{
     document.getElementById('stat-rate').textContent = stats.booking_rate ? stats.booking_rate + '%' : '—';
 
     const tbody = document.getElementById('dash-table-body');
-    if (!logs || logs.length === 0) {{
+    if (!logs || logs.length === 0) {
       tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted);">No calls yet. Make a test call!</td></tr>';
       return;
-    }}
+    }
     tbody.innerHTML = logs.slice(0, 10).map(log => `
       <tr>
-        <td style="color:var(--muted)">${{new Date(log.created_at).toLocaleString()}}</td>
-        <td style="font-weight:600">${{log.phone_number || 'Unknown'}}</td>
-        <td>${{log.duration_seconds || 0}}s</td>
-        <td>${{badgeFor(log.summary)}}</td>
+        <td style="color:var(--muted)">${new Date(log.created_at).toLocaleString()}</td>
+        <td style="font-weight:600">${log.phone_number || 'Unknown'}</td>
+        <td>${log.duration_seconds || 0}s</td>
+        <td>${badgeFor(log.summary)}</td>
         <td>
-          ${{log.id ? `<a style="color:var(--accent);font-size:12px;text-decoration:none;" href="/api/logs/${{log.id}}/transcript" download="transcript_${{log.id}}.txt">⬇ Download</a>` : ''}}
+          ${log.id ? `<a style="color:var(--accent);font-size:12px;text-decoration:none;" href="/api/logs/${log.id}/transcript" download="transcript_${log.id}.txt">⬇ Download</a>` : ''}
         </td>
       </tr>`).join('');
-  }} catch(e) {{
+  } catch(e) {
     document.getElementById('dash-table-body').innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted);">Could not load data — check Supabase credentials.</td></tr>';
-  }}
-}}
+  }
+}
 
-function badgeFor(summary) {{
+function badgeFor(summary) {
   if (!summary) return '<span class="badge badge-gray">Ended</span>';
   if (summary.toLowerCase().includes('confirm')) return '<span class="badge badge-green">✓ Booked</span>';
   if (summary.toLowerCase().includes('cancel')) return '<span class="badge badge-yellow">✗ Cancelled</span>';
   return '<span class="badge badge-gray">Completed</span>';
-}}
+}
 
 // ── Call Logs ───────────────────────────────────────────────────────────────
-async function loadLogs() {{
+async function loadLogs() {
   const tbody = document.getElementById('logs-table-body');
   tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted);">Loading...</td></tr>';
-  try {{
+  try {
     const logs = await fetch('/api/logs').then(r => r.json());
-    if (!logs || logs.length === 0) {{
+    if (!logs || logs.length === 0) {
       tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted);">No call logs found.</td></tr>';
       return;
-    }}
+    }
     tbody.innerHTML = logs.map(log => `
       <tr>
-        <td style="color:var(--muted);white-space:nowrap">${{new Date(log.created_at).toLocaleString()}}</td>
-        <td style="font-weight:600">${{log.phone_number || 'Unknown'}}</td>
-        <td>${{log.duration_seconds || 0}}s</td>
-        <td>${{badgeFor(log.summary)}}</td>
-        <td style="color:var(--muted);font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{log.summary || ''}}">${{log.summary || '—'}}</td>
+        <td style="color:var(--muted);white-space:nowrap">${new Date(log.created_at).toLocaleString()}</td>
+        <td style="font-weight:600">${log.phone_number || 'Unknown'}</td>
+        <td>${log.duration_seconds || 0}s</td>
+        <td>${badgeFor(log.summary)}</td>
+        <td style="color:var(--muted);font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${log.summary || ''}">${log.summary || '—'}</td>
         <td>
-          ${{log.id ? `<a class="btn btn-ghost btn-sm" style="text-decoration:none;" href="/api/logs/${{log.id}}/transcript" download="transcript_${{log.id}}.txt">⬇ Transcript</a>` : '—'}}
-          ${{log.recording_url ? `<a class="btn btn-ghost btn-sm" style="text-decoration:none;margin-left:4px;" href="${{log.recording_url}}" target="_blank">🎧 Recording</a>` : ''}}
+          ${log.id ? `<a class="btn btn-ghost btn-sm" style="text-decoration:none;" href="/api/logs/${log.id}/transcript" download="transcript_${log.id}.txt">⬇ Transcript</a>` : '—'}
+          ${log.recording_url ? `<a class="btn btn-ghost btn-sm" style="text-decoration:none;margin-left:4px;" href="${log.recording_url}" target="_blank">🎧 Recording</a>` : ''}
         </td>
       </tr>`).join('');
-  }} catch(e) {{
+  } catch(e) {
     tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:#ef4444;">Error loading logs. Check Supabase credentials.</td></tr>';
-  }}
-}}
+  }
+}
 
 // ── Calendar ────────────────────────────────────────────────────────────────
 let calYear = new Date().getFullYear();
 let calMonth = new Date().getMonth();
 let allBookings = [];
 
-async function loadCalendar() {{
-  try {{ allBookings = await fetch('/api/bookings').then(r => r.json()); }} catch(e) {{ allBookings = []; }}
+async function loadCalendar() {
+  try { allBookings = await fetch('/api/bookings').then(r => r.json()); } catch(e) { allBookings = []; }
   renderCalendar();
-}}
+}
 
-function changeMonth(dir) {{ calMonth += dir; if (calMonth > 11) {{ calMonth = 0; calYear++; }} else if (calMonth < 0) {{ calMonth = 11; calYear--; }} renderCalendar(); }}
+function changeMonth(dir) { calMonth += dir; if (calMonth > 11) { calMonth = 0; calYear++; } else if (calMonth < 0) { calMonth = 11; calYear--; } renderCalendar(); }
 
-function renderCalendar() {{
+function renderCalendar() {
   const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  document.getElementById('cal-month-label').textContent = `${{months[calMonth]}} ${{calYear}}`;
+  document.getElementById('cal-month-label').textContent = `${months[calMonth]} ${calYear}`;
   const grid = document.getElementById('cal-grid');
   const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const today = new Date();
 
-  // Build booking map by date string YYYY-MM-DD
-  const bookMap = {{}};
-  allBookings.forEach(b => {{
+  const bookMap = {};
+  allBookings.forEach(b => {
     const d = b.created_at ? b.created_at.slice(0,10) : null;
-    if (d) {{ bookMap[d] = bookMap[d] || []; bookMap[d].push(b); }}
-  }});
+    if (d) { bookMap[d] = bookMap[d] || []; bookMap[d].push(b); }
+  });
 
-  let html = days.map(d => `<div class="cal-day-name">${{d}}</div>`).join('');
+  let html = days.map(d => `<div class="cal-day-name">${d}</div>`).join('');
 
   const first = new Date(calYear, calMonth, 1);
   const last = new Date(calYear, calMonth + 1, 0);
   const startPad = first.getDay();
 
-  // Prev month padding
-  for (let i = 0; i < startPad; i++) {{
+  for (let i = 0; i < startPad; i++) {
     const d = new Date(calYear, calMonth, -startPad + i + 1);
-    html += `<div class="cal-cell other-month"><div class="cal-num">${{d.getDate()}}</div></div>`;
-  }}
+    html += `<div class="cal-cell other-month"><div class="cal-num">${d.getDate()}</div></div>`;
+  }
 
-  for (let day = 1; day <= last.getDate(); day++) {{
-    const dateStr = `${{calYear}}-${{String(calMonth+1).padStart(2,'0')}}-${{String(day).padStart(2,'0')}}`;
+  for (let day = 1; day <= last.getDate(); day++) {
+    const dateStr = `${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
     const bks = bookMap[dateStr] || [];
     const isToday = today.getFullYear()===calYear && today.getMonth()===calMonth && today.getDate()===day;
-    html += `<div class="cal-cell${{isToday?' today':''}}" onclick="showDay('${{dateStr}}', ${{JSON.stringify(bks).replace(/'/g,"&apos;")}})">
-      <div class="cal-num">${{day}}</div>
-      ${{bks.length ? `<div class="cal-dot"></div><div class="cal-booking-count">${{bks.length}} booking${{bks.length>1?'s':''}}</div>` : ''}}
+    html += `<div class="cal-cell${isToday?' today':''}" onclick="showDay('${dateStr}', ${JSON.stringify(bks).replace(/'/g,"&apos;")})">
+      <div class="cal-num">${day}</div>
+      ${bks.length ? `<div class="cal-dot"></div><div class="cal-booking-count">${bks.length} booking${bks.length>1?'s':''}</div>` : ''}
     </div>`;
-  }}
+  }
 
-  // Next month padding
   const endPad = 6 - last.getDay();
-  for (let i = 1; i <= endPad; i++) {{
-    html += `<div class="cal-cell other-month"><div class="cal-num">${{i}}</div></div>`;
-  }}
+  for (let i = 1; i <= endPad; i++) {
+    html += `<div class="cal-cell other-month"><div class="cal-num">${i}</div></div>`;
+  }
 
   grid.innerHTML = html;
   document.getElementById('day-panel').classList.remove('show');
-}}
+}
 
-function showDay(dateStr, bookings) {{
-  // Update old inline panel too
+function showDay(dateStr, bookings) {
   const panel = document.getElementById('day-panel');
-  if (panel) {{
+  if (panel) {
     panel.classList.add('show');
-    document.getElementById('day-panel-title').textContent = `Bookings on ${{dateStr}}`;
-  }}
-  // Open modal overlay
+    document.getElementById('day-panel-title').textContent = `Bookings on ${dateStr}`;
+  }
   openDayModal(dateStr, bookings);
-}}
+}
 
-function openDayModal(dateStr, bookings) {{
+function openDayModal(dateStr, bookings) {
   const modal = document.getElementById('day-modal');
   const dateObj = new Date(dateStr + 'T00:00:00');
-  const formatted = dateObj.toLocaleDateString('en-IN', {{weekday:'long', year:'numeric', month:'long', day:'numeric'}});
+  const formatted = dateObj.toLocaleDateString('en-IN', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
   document.getElementById('modal-date-title').textContent = formatted;
   document.getElementById('modal-date-sub').textContent =
-    bookings.length ? `${{bookings.length}} booking${{bookings.length>1?'s':''}} on this day` : 'No bookings on this day';
+    bookings.length ? `${bookings.length} booking${bookings.length>1?'s':''} on this day` : 'No bookings on this day';
 
-  if (!bookings || bookings.length === 0) {{
+  if (!bookings || bookings.length === 0) {
     document.getElementById('modal-bookings-body').innerHTML =
       '<div style="text-align:center;padding:32px;color:var(--muted);font-size:14px;">📅 No bookings on this day.</div>';
-  }} else {{
+  } else {
     document.getElementById('modal-bookings-body').innerHTML = bookings.map(b => `
       <div class="booking-item">
         <div style="display:flex;align-items:center;justify-content:space-between;">
-          <div style="font-weight:700;font-size:14px;">📞 ${{b.phone_number || 'Unknown'}}</div>
+          <div style="font-weight:700;font-size:14px;">📞 ${b.phone_number || 'Unknown'}</div>
           <span class="badge badge-green">✅ Booked</span>
         </div>
-        <div style="font-size:12px;color:var(--muted);margin-top:6px;">🕐 ${{new Date(b.created_at).toLocaleTimeString('en-IN', {{hour:'2-digit',minute:'2-digit'}})}}</div>
-        ${{b.summary ? `<div style="font-size:12px;color:var(--text);margin-top:6px;padding:8px;background:rgba(255,255,255,0.04);border-radius:6px;">💬 ${{b.summary}}</div>` : ''}}
+        <div style="font-size:12px;color:var(--muted);margin-top:6px;">🕐 ${new Date(b.created_at).toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit'})}</div>
+        ${b.summary ? `<div style="font-size:12px;color:var(--text);margin-top:6px;padding:8px;background:rgba(255,255,255,0.04);border-radius:6px;">💬 ${b.summary}</div>` : ''}
       </div>`).join('');
-  }}
+  }
   modal.classList.add('open');
-}}
+}
 
-function closeDayModal() {{
+function closeDayModal() {
   document.getElementById('day-modal').classList.remove('open');
-}}
-document.addEventListener('keydown', e => {{ if (e.key === 'Escape') closeDayModal(); }});
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDayModal(); });
 
 // ── CRM ─────────────────────────────────────────────────────────────────────
-async function loadCRM() {{
+async function loadCRM() {
   const tbody = document.getElementById('crm-tbody');
   if (!tbody) return;
   tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--muted);">Loading contacts...</td></tr>';
-  try {{
+  try {
     const contacts = await fetch('/api/contacts').then(r => r.json());
-    if (!contacts.length) {{
+    if (!contacts.length) {
       tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:40px;color:var(--muted);">No contacts yet. They will appear here automatically after calls.</td></tr>';
       return;
-    }}
+    }
     tbody.innerHTML = contacts.map(c => `
       <tr style="border-bottom:1px solid var(--border);transition:background 0.12s;" onmouseover="this.style.background='rgba(255,255,255,0.025)'" onmouseout="this.style.background=''">
-        <td style="padding:14px 16px;font-weight:600;">${{c.caller_name || '<span style="color:var(--muted);font-weight:400;">Unknown</span>'}}</td>
-        <td style="padding:14px 16px;font-family:monospace;font-size:13px;">${{c.phone_number || '—'}}</td>
-        <td style="padding:14px 16px;text-align:center;"><span style="background:rgba(108,99,255,0.12);color:var(--accent);padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;">${{c.total_calls}}</span></td>
-        <td style="padding:14px 16px;color:var(--muted);font-size:12px;">${{c.last_seen ? new Date(c.last_seen).toLocaleString('en-IN') : '—'}}</td>
-        <td style="padding:14px 16px;">${{c.is_booked
+        <td style="padding:14px 16px;font-weight:600;">${c.caller_name || '<span style="color:var(--muted);font-weight:400;">Unknown</span>'}</td>
+        <td style="padding:14px 16px;font-family:monospace;font-size:13px;">${c.phone_number || '—'}</td>
+        <td style="padding:14px 16px;text-align:center;"><span style="background:rgba(108,99,255,0.12);color:var(--accent);padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;">${c.total_calls}</span></td>
+        <td style="padding:14px 16px;color:var(--muted);font-size:12px;">${c.last_seen ? new Date(c.last_seen).toLocaleString('en-IN') : '—'}</td>
+        <td style="padding:14px 16px;">${c.is_booked
           ? '<span class="badge badge-green">✅ Booked</span>'
-          : '<span class="badge badge-gray">📵 No booking</span>'}}</td>
+          : '<span class="badge badge-gray">📵 No booking</span>'}</td>
       </tr>`).join('');
-  }} catch(e) {{
+  } catch(e) {
     tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:#ef4444;">Error loading contacts. Check Supabase credentials.</td></tr>';
-  }}
-}}
+  }
+}
 
 // ── Save Config ─────────────────────────────────────────────────────────────
-async function saveConfig(section) {{
-  const get = id => {{ const el = document.getElementById(id); return el ? el.value : null; }};
+async function saveConfig(section) {
+  const get = id => { const el = document.getElementById(id); return el ? el.value : null; };
 
-  const payload = {{}};
+  const payload = {};
 
-  if (section === 'agent') {{
-    Object.assign(payload, {{
+  if (section === 'agent') {
+    Object.assign(payload, {
       first_line: get('first_line'),
       agent_instructions: get('agent_instructions'),
       stt_min_endpointing_delay: parseFloat(get('stt_min_endpointing_delay')),
-    }});
-  }} else if (section === 'models') {{
-    Object.assign(payload, {{
+    });
+  } else if (section === 'models') {
+    Object.assign(payload, {
       llm_model: get('llm_model'),
       tts_voice: get('tts_voice'),
       tts_language: get('tts_language'),
-    }});
-  }} else if (section === 'credentials') {{
-    Object.assign(payload, {{
-      livekit_url: get('livekit_url'), sip_trunk_id: get('sip_trunk_id'),
-      livekit_api_key: get('livekit_api_key'), livekit_api_secret: get('livekit_api_secret'),
-      openai_api_key: get('openai_api_key'), sarvam_api_key: get('sarvam_api_key'),
-      cal_api_key: get('cal_api_key'), cal_event_type_id: get('cal_event_type_id'),
-      telegram_bot_token: get('telegram_bot_token'), telegram_chat_id: get('telegram_chat_id'),
-      supabase_url: get('supabase_url'), supabase_key: get('supabase_key'),
-    }});
-  }}
+    });
+  } else if (section === 'credentials') {
+    Object.assign(payload, {
+      livekit_url: get('livekit_url'),
+      livekit_api_key: get('livekit_api_key'),
+      livekit_api_secret: get('livekit_api_secret'),
+      google_api_key: get('google_api_key'),
+      telnyx_api_key: get('telnyx_api_key'),
+      telnyx_connection_id: get('telnyx_connection_id'),
+      telnyx_sip_trunk_id: get('telnyx_sip_trunk_id'),
+      telnyx_outbound_number: get('telnyx_outbound_number'),
+      deployment_market: get('deployment_market'),
+      cal_api_key: get('cal_api_key'),
+      cal_event_type_id: get('cal_event_type_id'),
+      telegram_bot_token: get('telegram_bot_token'),
+      telegram_chat_id: get('telegram_chat_id'),
+      supabase_url: get('supabase_url'),
+      supabase_key: get('supabase_key'),
+    });
+  }
 
-  const res = await fetch('/api/config', {{
-    method: 'POST', headers: {{'Content-Type': 'application/json'}},
+  const res = await fetch('/api/config', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(payload)
-  }});
+  });
 
   const statusEl = document.getElementById('save-status-' + section);
-  if (res.ok) {{
+  if (res.ok) {
     statusEl.style.opacity = '1';
-    setTimeout(() => {{ statusEl.style.opacity = '0'; }}, 2500);
-  }} else {{
+    setTimeout(() => { statusEl.style.opacity = '0'; }, 2500);
+  } else {
     alert('Failed to save. Check server logs.');
-  }}
-}}
-
+  }
+}
 
 // ── Language Presets ─────────────────────────────────────────────────────────
-const LANG_PRESETS = {{
-  hinglish:    {{ flag:'🇮🇳', label:'Hinglish',                sub:'Hindi + English mix',        color:'#6c63ff' }},
-  hindi:       {{ flag:'🇮🇳', label:'Hindi',                   sub:'Pure Hindi',                  color:'#a855f7' }},
-  english:     {{ flag:'🇬🇧', label:'English (India)',          sub:'Indian English',              color:'#3b82f6' }},
-  tamil:       {{ flag:'🇮🇳', label:'Tamil',                   sub:'தமிழ்',                       color:'#f59e0b' }},
-  telugu:      {{ flag:'🇮🇳', label:'Telugu',                  sub:'తెలుగు',                      color:'#10b981' }},
-  gujarati:    {{ flag:'🇮🇳', label:'Gujarati',                sub:'ગુજરાતી',                     color:'#ef4444' }},
-  bengali:     {{ flag:'🇮🇳', label:'Bengali',                 sub:'বাংলা',                       color:'#f97316' }},
-  marathi:     {{ flag:'🇮🇳', label:'Marathi',                 sub:'मराठी',                       color:'#14b8a6' }},
-  kannada:     {{ flag:'🇮🇳', label:'Kannada',                 sub:'ಕನ್ನಡ',                       color:'#8b5cf6' }},
-  malayalam:   {{ flag:'🇮🇳', label:'Malayalam',               sub:'മലയാളം',                      color:'#ec4899' }},
-  multilingual:{{ flag:'🌍', label:'Multilingual (Auto)',       sub:"Detects caller's language",   color:'#22c55e' }},
-}};
+const LANG_PRESETS = {
+  hinglish:    { flag:'🇮🇳', label:'Hinglish',                sub:'Hindi + English mix',        color:'#6c63ff' },
+  hindi:       { flag:'🇮🇳', label:'Hindi',                   sub:'Pure Hindi',                  color:'#a855f7' },
+  english:     { flag:'🇬🇧', label:'English (India)',          sub:'Indian English',              color:'#3b82f6' },
+  tamil:       { flag:'🇮🇳', label:'Tamil',                   sub:'தமிழ்',                       color:'#f59e0b' },
+  telugu:      { flag:'🇮🇳', label:'Telugu',                  sub:'తెలుగు',                      color:'#10b981' },
+  gujarati:    { flag:'🇮🇳', label:'Gujarati',                sub:'ગુજરાતી',                     color:'#ef4444' },
+  bengali:     { flag:'🇮🇳', label:'Bengali',                 sub:'বাংলা',                       color:'#f97316' },
+  marathi:     { flag:'🇮🇳', label:'Marathi',                 sub:'मराठी',                       color:'#14b8a6' },
+  kannada:     { flag:'🇮🇳', label:'Kannada',                 sub:'ಕನ್ನಡ',                       color:'#8b5cf6' },
+  malayalam:   { flag:'🇮🇳', label:'Malayalam',               sub:'മലയാളം',                      color:'#ec4899' },
+  multilingual:{ flag:'🌍', label:'Multilingual (Auto)',       sub:"Detects caller's language",   color:'#22c55e' },
+};
 
 let currentLangPreset = 'hinglish';
 
-async function initLanguagePage() {{
-  try {{
+async function initLanguagePage() {
+  try {
     const cfg = await fetch('/api/config').then(r=>r.json());
     currentLangPreset = cfg.lang_preset || 'hinglish';
-  }} catch(e) {{}}
+  } catch(e) {}
   renderLangGrid();
-}}
+}
 
-function renderLangGrid() {{
+function renderLangGrid() {
   const grid = document.getElementById('lang-grid');
   if (!grid) return;
   grid.innerHTML = Object.entries(LANG_PRESETS).map(([id, p]) => `
-    <div onclick="selectLangPreset('${{id}}')" style="
-      background:${{id===currentLangPreset ? 'rgba(108,99,255,0.15)' : 'var(--bg)'}};
-      border:2px solid ${{id===currentLangPreset ? p.color : 'var(--border)'}};
+    <div onclick="selectLangPreset('${id}')" style="
+      background:${id===currentLangPreset ? 'rgba(108,99,255,0.15)' : 'var(--bg)'};
+      border:2px solid ${id===currentLangPreset ? p.color : 'var(--border)'};
       border-radius:12px;padding:18px;cursor:pointer;transition:all 0.15s;
-      ${{id===currentLangPreset ? 'box-shadow:0 0 16px rgba(108,99,255,0.2)' : ''}}
-    " onmouseover="this.style.borderColor='${{p.color}}'" onmouseout="this.style.borderColor='${{id===currentLangPreset?p.color:'var(--border)}}'">
-      <div style="font-size:28px;margin-bottom:8px;">${{p.flag}}</div>
-      <div style="font-weight:700;font-size:14px;color:${{id===currentLangPreset?p.color:'var(--text)'}}">${{p.label}}</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:3px;">${{p.sub}}</div>
-      ${{id===currentLangPreset ? '<div style="font-size:10px;color:#22c55e;margin-top:6px;font-weight:600;">✓ ACTIVE</div>' : ''}}
+      ${id===currentLangPreset ? 'box-shadow:0 0 16px rgba(108,99,255,0.2)' : ''}
+    " onmouseover="this.style.borderColor='${p.color}'" onmouseout="this.style.borderColor='${id===currentLangPreset?p.color:'var(--border)'}'">
+      <div style="font-size:28px;margin-bottom:8px;">${p.flag}</div>
+      <div style="font-weight:700;font-size:14px;color:${id===currentLangPreset?p.color:'var(--text)'}">${p.label}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:3px;">${p.sub}</div>
+      ${id===currentLangPreset ? '<div style="font-size:10px;color:#22c55e;margin-top:6px;font-weight:600;">✓ ACTIVE</div>' : ''}
     </div>`).join('');
-}}
+}
 
-async function selectLangPreset(id) {{
+async function selectLangPreset(id) {
   const p = LANG_PRESETS[id];
   if (!p) return;
   currentLangPreset = id;
   renderLangGrid();
-  // Save lang_preset, tts_language, tts_voice to config
-  try {{
-    const cfg = await fetch('/api/config').then(r=>r.json());
-    const voices = {{ hinglish:'kavya', hindi:'ritu', english:'dev', tamil:'priya', telugu:'kavya', gujarati:'rohan', bengali:'neha', marathi:'shubh', kannada:'rahul', malayalam:'ritu', multilingual:'kavya' }};
-    const langs  = {{ hinglish:'hi-IN', hindi:'hi-IN', english:'en-IN', tamil:'ta-IN', telugu:'te-IN', gujarati:'gu-IN', bengali:'bn-IN', marathi:'mr-IN', kannada:'kn-IN', malayalam:'ml-IN', multilingual:'hi-IN' }};
-    await fetch('/api/config', {{
-      method:'POST', headers:{{'Content-Type':'application/json'}},
-      body: JSON.stringify({{ lang_preset: id, tts_language: langs[id], tts_voice: voices[id] }})
-    }});
+  try {
+    await fetch('/api/config', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ lang_preset: id, tts_language: 'en-US', tts_voice: 'Aoede' })
+    });
     const toast = document.createElement('div');
     toast.style.cssText='position:fixed;bottom:24px;right:24px;background:#22c55e;color:#fff;padding:12px 20px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999;animation:slideUp 0.3s ease';
-    toast.textContent = `✅ ${{p.label}} preset activated!`;
+    toast.textContent = `✅ ${p.label} preset activated!`;
     document.body.appendChild(toast);
     setTimeout(()=>toast.remove(), 2500);
-  }} catch(e) {{ alert('Failed to save: ' + e); }}
-}}
+  } catch(e) { alert('Failed to save: ' + e); }
+}
 
 // ── Outbound Calls ─────────────────────────────────────────────────────────── 
-async function makeSingleCall() {{
+async function makeSingleCall() {
   const phone = document.getElementById('call-single-num').value.trim();
   if (!phone) return;
   const el = document.getElementById('single-call-status');
   el.textContent = '⏳ Dispatching...';
   el.style.color = 'var(--muted)';
-  try {{
-    const res = await fetch('/api/call/single', {{
-      method:'POST', headers:{{'Content-Type':'application/json'}},
-      body: JSON.stringify({{phone}})
-    }}).then(r=>r.json());
-    if (res.status === 'ok') {{
-      el.innerHTML = `✅ Call dispatched! Dispatch ID: <code>${{res.dispatch_id}}</code>`;
+  try {
+    const res = await fetch('/api/call/single', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({phone})
+    }).then(r=>r.json());
+    if (res.status === 'ok') {
+      el.innerHTML = `✅ Call dispatched! Dispatch ID: <code>${res.dispatch_id}</code>`;
       el.style.color = 'var(--green)';
-    }} else {{
+    } else {
       el.textContent = '❌ ' + res.message;
       el.style.color = 'var(--red)';
-    }}
-  }} catch(e) {{
+    }
+  } catch(e) {
     el.textContent = '❌ Error: ' + e;
     el.style.color = 'var(--red)';
-  }}
-}}
+  }
+}
 
-async function makeBulkCall() {{
+async function makeBulkCall() {
   const nums = document.getElementById('call-bulk-nums').value.trim();
   if (!nums) return;
   const el = document.getElementById('bulk-call-status');
   el.textContent = '⏳ Dispatching all numbers...';
-  try {{
-    const res = await fetch('/api/call/bulk', {{
-      method:'POST', headers:{{'Content-Type':'application/json'}},
-      body: JSON.stringify({{numbers: nums}})
-    }}).then(r=>r.json());
+  try {
+    const res = await fetch('/api/call/bulk', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({numbers: nums})
+    }).then(r=>r.json());
     const results = res.results || [];
     document.getElementById('call-results-card').style.display = 'block';
     document.getElementById('call-results-body').innerHTML = results.map(r => `
       <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);">
-        <span style="font-family:monospace;">${{r.phone}}</span>
-        <span class="badge ${{r.status==='ok'?'badge-green':'badge-gray'}}">${{r.status==='ok'?'✅ Sent':'❌ '+r.message}}</span>
+        <span style="font-family:monospace;">${r.phone}</span>
+        <span class="badge ${r.status==='ok'?'badge-green':'badge-gray'}">${r.status==='ok'?'✅ Sent':'❌ '+r.message}</span>
       </div>`).join('');
-    el.textContent = `✅ ${{results.filter(r=>r.status==='ok').length}}/${{results.length}} calls dispatched`;
+    el.textContent = `✅ ${results.filter(r=>r.status==='ok').length}/${results.length} calls dispatched`;
     el.style.color = 'var(--green)';
-  }} catch(e) {{
+  } catch(e) {
     el.textContent = '❌ Error: ' + e;
     el.style.color = 'var(--red)';
-  }}
-}}
+  }
+}
 
 // ── Demo Link ─────────────────────────────────────────────────────────────────
 let demoUrl = '';
-function initDemo() {{
+function initDemo() {
   // no-op until user clicks generate
-}}
-async function generateDemo() {{
+}
+async function generateDemo() {
   const statusEl = document.getElementById('demo-status');
   statusEl.textContent = '⏳ Generating session...';
-  try {{
+  try {
     const origin = window.location.origin;
     demoUrl = origin + '/demo';
     document.getElementById('demo-link-box').textContent = demoUrl;
@@ -1357,21 +1383,46 @@ async function generateDemo() {{
     document.getElementById('demo-iframe').src = demoUrl;
     document.getElementById('demo-iframe').style.display = 'block';
     statusEl.textContent = 'Session ready — share the link or use the preview below';
-  }} catch(e) {{
+  } catch(e) {
     statusEl.textContent = '❌ ' + e;
-  }}
-}}
-function copyDemoLink() {{
+  }
+}
+function copyDemoLink() {
   navigator.clipboard.writeText(demoUrl);
   document.getElementById('copy-demo-btn').textContent = '✅ Copied!';
   setTimeout(()=>document.getElementById('copy-demo-btn').textContent='📋 Copy Link', 2000);
-}}
+}
 
 // ── Boot ────────────────────────────────────────────────────────────────────
 loadDashboard();
 </script>
 </body>
 </html>"""
+
+    # Bind configuration values to the template
+    html = html.replace("VAL_FIRST_LINE", config.get("first_line", ""))
+    html = html.replace("VAL_AGENT_INSTRUCTIONS", config.get("agent_instructions", ""))
+    html = html.replace("VAL_STT_MIN_DELAY", str(config.get("stt_min_endpointing_delay", 0.05)))
+    html = html.replace("LLM_MODEL_OPTIONS", llm_opts)
+    html = html.replace("TTS_VOICE_OPTIONS", voice_opts)
+    html = html.replace("TTS_LANGUAGE_OPTIONS", lang_opts)
+    html = html.replace("DEPLOYMENT_MARKET_OPTIONS", market_opts)
+
+    html = html.replace("VAL_LIVEKIT_URL", config.get("livekit_url", ""))
+    html = html.replace("VAL_LIVEKIT_API_KEY", config.get("livekit_api_key", ""))
+    html = html.replace("VAL_LIVEKIT_API_SECRET", config.get("livekit_api_secret", ""))
+    html = html.replace("VAL_TELNYX_API_KEY", config.get("telnyx_api_key", ""))
+    html = html.replace("VAL_TELNYX_CONNECTION_ID", config.get("telnyx_connection_id", ""))
+    html = html.replace("VAL_TELNYX_SIP_TRUNK_ID", config.get("telnyx_sip_trunk_id", config.get("sip_trunk_id", "")))
+    html = html.replace("VAL_TELNYX_OUTBOUND_NUMBER", config.get("telnyx_outbound_number", ""))
+    html = html.replace("VAL_GOOGLE_API_KEY", config.get("google_api_key", ""))
+
+    html = html.replace("VAL_CAL_API_KEY", config.get("cal_api_key", ""))
+    html = html.replace("VAL_CAL_EVENT_TYPE_ID", config.get("cal_event_type_id", ""))
+    html = html.replace("VAL_TELEGRAM_BOT_TOKEN", config.get("telegram_bot_token", ""))
+    html = html.replace("VAL_TELEGRAM_CHAT_ID", config.get("telegram_chat_id", ""))
+    html = html.replace("VAL_SUPABASE_URL", config.get("supabase_url", ""))
+    html = html.replace("VAL_SUPABASE_KEY", config.get("supabase_key", ""))
 
     return HTMLResponse(content=html)
 

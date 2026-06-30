@@ -1,8 +1,8 @@
-# RapidX AI - Voice Agent Platform
+# BoldFlow Labs — AI Voice Agent (Inbound)
 
-This project provides a production-ready solution for managing and running an AI voice agent capable of handling **both inbound and outbound calls** using LiveKit and Vobiz SIP trunks. The AI agent can place calls, wait for an answer, hold natural conversations in multiple languages, process bookings, and maintain context across interactions.
+This repository hosts the **BoldFlow Labs Inbound AI Voice Agent**, a production-ready white-labeled voice agent solution for handling inbound telephony using **Google Gemini Live API** (via `livekit-plugins-google`) and **Telnyx SIP FQDN trunking**.
 
-It also includes a feature-rich **FastAPI Dashboard** to manage settings, view call logs, monitor analytics, and trigger outbound calls.
+The system features real-time conversational reasoning, automated appointment booking (Cal.com / Google Calendar), post-call notifications, CRM contacts list, and a modern dashboard UI to manage settings, view logs, and monitor analytics.
 
 ---
 
@@ -11,100 +11,55 @@ It also includes a feature-rich **FastAPI Dashboard** to manage settings, view c
 ### Core Components
 | File | Description |
 |------|-------------|
-| `agent.py` | The main AI worker. It runs in the background, waits for dispatch jobs (outbound) or direct connections (inbound), and handles the core conversational loop using STT, LLM, and TTS. |
-| `ui_server.py` | A FastAPI backend that serves the RapidX AI Dashboard. It provides endpoints for viewing logs, updating configurations, and dispatching calls. |
-| `make_call.py` | A utility script to trigger outbound calls manually via CLI. |
-| `setup_trunk.py` | Script to programmatically configure the LiveKit SIP Trunk with your Vobiz credentials. |
-
-### Utilities
-| File | Description |
-|------|-------------|
-| `db.py` | Handles database interactions with Supabase (e.g., fetching and saving call logs, checking active calls). |
-| `calendar_tools.py` | Tools the AI uses to check availability and book appointments. |
-| `notify.py` | Handles post-call notifications (e.g., sending booking confirmations via Telegram/Webhooks). |
-| `config.json` | The dynamic configuration file updated via the UI Server. |
-| `requirements.txt` | Python dependencies. |
+| [agent.py](file:///d:/projects/InboundAIVoice/agent.py) | Main AI worker. Connects to LiveKit rooms and routes real-time audio through Google Gemini Live API. |
+| [ui_server.py](file:///d:/projects/InboundAIVoice/ui_server.py) | FastAPI server hosting the BoldFlow Labs dashboard. |
+| [setup_trunk.py](file:///d:/projects/InboundAIVoice/setup_trunk.py) | Provisioning script to configure Telnyx FQDN connections and LiveKit SIP trunks. |
+| [make_call.py](file:///d:/projects/InboundAIVoice/make_call.py) | Outbound dialing script using LiveKit agent dispatches. |
 
 ---
 
-## 🚀 Installation & Setup
+## 🚀 Getting Started
 
-### 1. Prerequisites
+### 1. Installation
 
-Ensure you have the following installed:
-- **Python 3.9+**
-- **uv** (recommended for fast package management) - [Install uv](https://github.com/astral-sh/uv)
+1. Install Python 3.9+
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-### 2. Required Accounts & Credentials
+### 2. Configuration
 
-You will need the following accounts to run the full stack:
-1.  **LiveKit Cloud**: Project URL, API Key, and Secret from [cloud.livekit.io](https://cloud.livekit.io).
-2.  **Vobiz Account**: For SIP Trunking (Domain, Username, Password, DID Number).
-3.  **Supabase**: For database logging and storage (URL, Key).
-4.  **OpenAI / Cartesia / Sarvam**: Keys for Language Models (LLM), Speech-to-Text (STT), and Text-to-Speech (TTS).
+Copy `.env.example` to `.env` and fill in:
+* `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_SIP_DOMAIN`
+* `GOOGLE_API_KEY`
+* `TELNYX_API_KEY`, `TELNYX_OUTBOUND_NUMBER`, `DEPLOYMENT_MARKET`
 
-### 3. Installation Steps
+### 3. Setup Trunking
 
-1.  **Clone the project** to your local machine.
-2.  **Open a terminal** in the project folder.
-3.  **Install dependencies** using `uv`:
-
-    ```powershell
-    # Create virtual environment
-    uv venv
-
-    # Install required packages
-    uv pip install -r requirements.txt
-    ```
-
-### 4. Configuration
-
-1.  **Create your env file**:
-    Copy `.env.example` to `.env` (or `.env.local`) and fill in your API keys.
-2.  **Set Trunk ID in `ui_server.py` / `config.json`**:
-    Configure your SIP Trunk ID and other essential settings either directly in the `.env` file or via the RapidX Dashboard.
-
----
-
-## 📞 How to Use
-
-### Step 1: Start the Dashboard
-
-Open a terminal and run the UI Server:
-
-```powershell
-uv run uvicorn ui_server:app --port 8000
+Run the provisioning script to configure Telnyx and LiveKit routing:
+```bash
+python setup_trunk.py
 ```
-*   Visit `http://localhost:8000` to access the dashboard.
-*   Here you can configure your agent's system prompt, models, and voice settings.
 
-### Step 2: Start the Background Agent
+### 4. Running the Dashboard & Agent
 
-Open a **separate** terminal window and run:
-
-```powershell
-uv run python agent.py start
+Start the dashboard:
+```bash
+uvicorn ui_server:app --port 8000
 ```
-*   Wait until you see the message: `INFO:livekit.agents:registered worker ...`
-*   This agent will now listen for incoming calls or dispatch requests.
-
-### Step 3: Make a Call
-
-You can trigger a call either from the **Dashboard** (Outbound Calls page) or via the CLI:
-
-```powershell
-uv run python make_call.py --to +919988776655
+Start the agent worker:
+```bash
+python agent.py dev
 ```
 
 ---
 
-## 🛠️ Troubleshooting
+## 🧪 Manual Verification Checklist
 
-- **Agent not starting?**
-    - Ensure your `.env` variables are correctly set.
-    - Make sure `livekit-agents` and its plugins are installed correctly.
-- **Calls not connecting?**
-    - Verify your SIP credentials in the LiveKit Cloud dashboard or `setup_trunk.py`.
-    - Check that the destination number includes the correct country code (e.g., `+91`).
-- **Dashboard not loading data?**
-    - Ensure your Supabase credentials are valid and the database tables exist (`call_logs`, `active_calls`, `call_transcripts`). Check `supabase_setup.sql` if you need to create them.
+Follow these steps to manually verify the setup:
+
+1. **Verify Dashboard Access**: Visit `http://localhost:8000`. Ensure that the logo, page titles, footer, and branding reflect "BoldFlow Labs".
+2. **Verify Telephony Setup**: Run `python setup_trunk.py`. Check your Telnyx dashboard to confirm that the FQDN connection "BoldFlow Labs SIP Connection" is active and mapped correctly to the LiveKit SIP domain.
+3. **Verify Gemini Live Session**: Place a test call to your Telnyx number. Ensure the agent starts immediately, replies using the selected Gemini voice (e.g. Aoede), and responds correctly to appointment scheduling questions using the live calendar tools.
+4. **Verify Call Logs & Transcripts**: After hanging up, check the "Call Logs" page in the dashboard. Verify that the call summary, duration, sentiment, and download links are working and populated in the Supabase database.

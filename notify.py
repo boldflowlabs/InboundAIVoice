@@ -83,7 +83,7 @@ def send_whatsapp_booking_confirmation(
         f"✅ Hi {caller_name or 'there'}! Your appointment is *confirmed*.\n\n"
         f"📅 *Date & Time:* {readable}\n\n"
         f"If you need to reschedule or cancel, just call us back.\n\n"
-        f"— RapidX AI 🤖"
+        f"— BoldFlow Labs 🤖"
     )
     return send_whatsapp(caller_phone, message)
 
@@ -117,7 +117,7 @@ def notify_booking_confirmed(
         f"🎙️ *Voice Model:* {tts_voice or '—'}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         + (f"💬 *AI Summary:*\n_{ai_summary}_\n\n" if ai_summary else "")
-        + f"_Booked via RapidX AI Voice Agent_ 🤖"
+        + f"_Booked via BoldFlow AI Voice Agent_ 🤖"
     )
     tg_ok = send_telegram(message)
 
@@ -141,7 +141,7 @@ def notify_booking_cancelled(
         f"🔖 *Booking ID:* `{booking_id}`\n"
         f"💬 *Reason:*    {reason or 'Caller changed mind'}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"_RapidX AI Voice Agent_ 🤖"
+        f"_BoldFlow AI Voice Agent_ 🤖"
     )
     return send_telegram(message)
 
@@ -164,7 +164,7 @@ def notify_call_no_booking(
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         + f"💬 *Summary:*\n_{ai_summary or call_summary or 'Caller did not schedule.'}_\n\n"
         + f"_Consider a manual follow-up call_ 📲\n"
-        f"_RapidX AI Voice Agent_ 🤖"
+        f"_BoldFlow AI Voice Agent_ 🤖"
     )
     return send_telegram(message)
 
@@ -176,7 +176,7 @@ def notify_agent_error(caller_phone: str, error: str) -> bool:
         f"📞 *Phone:*  `{caller_phone}`\n"
         f"🔴 *Error:*  `{error}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"_RapidX AI Voice Agent_ 🤖"
+        f"_BoldFlow AI Voice Agent_ 🤖"
     )
     return send_telegram(message)
 
