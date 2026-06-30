@@ -71,11 +71,22 @@ def send_whatsapp_booking_confirmation(
     caller_phone: str,
     caller_name: str,
     booking_time_iso: str,
+    timezone_name: str = "America/New_York",
 ) -> bool:
     """Send WhatsApp confirmation after a booking is made."""
     try:
-        dt = datetime.fromisoformat(booking_time_iso)
-        readable = dt.strftime("%A, %d %B %Y at %I:%M %p IST")
+        dt = datetime.fromisoformat(booking_time_iso.replace("Z", "+00:00"))
+        try:
+            import pytz
+            tz = pytz.timezone(timezone_name)
+            dt = dt.astimezone(tz)
+            tz_abbr = dt.tzname() or "EST"
+        except Exception:
+            tz_abbr = "EST"
+        formatted_time = dt.strftime("%I:%M %p")
+        if formatted_time.startswith("0"):
+            formatted_time = formatted_time[1:]
+        readable = dt.strftime(f"%A, %d %B %Y at {formatted_time} {tz_abbr}")
     except Exception:
         readable = booking_time_iso
 
@@ -98,11 +109,22 @@ def notify_booking_confirmed(
     notes: str = "",
     tts_voice: str = "",
     ai_summary: str = "",
+    timezone_name: str = "America/New_York",
 ) -> bool:
     """Sends Telegram + WhatsApp when a booking is confirmed."""
     try:
-        dt = datetime.fromisoformat(booking_time_iso)
-        readable = dt.strftime("%A, %d %B %Y at %-I:%M %p IST")
+        dt = datetime.fromisoformat(booking_time_iso.replace("Z", "+00:00"))
+        try:
+            import pytz
+            tz = pytz.timezone(timezone_name)
+            dt = dt.astimezone(tz)
+            tz_abbr = dt.tzname() or "EST"
+        except Exception:
+            tz_abbr = "EST"
+        formatted_time = dt.strftime("%I:%M %p")
+        if formatted_time.startswith("0"):
+            formatted_time = formatted_time[1:]
+        readable = dt.strftime(f"%A, %d %B %Y at {formatted_time} {tz_abbr}")
     except Exception:
         readable = booking_time_iso
 
@@ -122,7 +144,7 @@ def notify_booking_confirmed(
     tg_ok = send_telegram(message)
 
     # Also send WhatsApp confirmation to caller (#16)
-    send_whatsapp_booking_confirmation(caller_phone, caller_name, booking_time_iso)
+    send_whatsapp_booking_confirmation(caller_phone, caller_name, booking_time_iso, timezone_name)
 
     return tg_ok
 

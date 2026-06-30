@@ -114,6 +114,73 @@ async def setup_telnyx_connection(api_key: str, anchorsite: str, sip_domain: str
         print("Associated phone number successfully.")
         return conn_id
 
+async def setup_telnyx_credential_connection(api_key: str) -> tuple[str, str]:
+    """Retrieve or create Telnyx Credential Connection and return (username, password)."""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+
+    # Allow environment overrides
+    env_user = os.getenv("TELNYX_SIP_USERNAME")
+    env_pass = os.getenv("TELNYX_SIP_PASSWORD")
+    if env_user and env_pass:
+        print("Using Telnyx SIP credentials from environment variables.")
+        return env_user, env_pass
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        # Check if Credential Connection already exists
+        print("Checking Telnyx Credential connections...")
+        resp = await client.get("https://api.telnyx.com/v2/credential_connections", headers=headers)
+        if resp.status_code == 200:
+            conns = resp.json().get("data", [])
+            for c in conns:
+                if c.get("connection_name") == "BoldFlow Labs Credential Connection":
+                    conn_id = c.get("id")
+                    user_name = c.get("user_name")
+                    password = c.get("password")
+                    
+                    if not password:
+                        # Fetch individual connection details to get password
+                        print(f"Retrieving details for connection: {conn_id}")
+                        detail_resp = await client.get(f"https://api.telnyx.com/v2/credential_connections/{conn_id}", headers=headers)
+                        if detail_resp.status_code == 200:
+                            detail_data = detail_resp.json().get("data", {})
+                            user_name = detail_data.get("user_name")
+                            password = detail_data.get("password")
+                    
+                    if user_name and password:
+                        print(f"Found existing Telnyx Credential connection: {conn_id} (user: {user_name})")
+                        return user_name, password
+
+        # Create Credential Connection if it doesn't exist
+        print("Creating new Telnyx Credential connection...")
+        import secrets
+        import string
+        def generate_random_string(length=16):
+            chars = string.ascii_letters + string.digits
+            return "".join(secrets.choice(chars) for _ in range(length))
+
+        username = f"boldflow_{generate_random_string(8)}"
+        password = generate_random_string(20)
+
+        payload = {
+            "active": True,
+            "connection_name": "BoldFlow Labs Credential Connection",
+            "user_name": username,
+            "password": password
+        }
+        resp = await client.post("https://api.telnyx.com/v2/credential_connections", headers=headers, json=payload)
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to create Telnyx Credential connection: {resp.text}")
+
+        data = resp.json().get("data", {})
+        ret_user = data.get("user_name") or username
+        ret_pass = data.get("password") or password
+        print(f"Created Telnyx Credential connection (user: {ret_user})")
+        return ret_user, ret_pass
+
 async def main():
     # 1. Read configuration/environment
     market = os.getenv("DEPLOYMENT_MARKET", "US").upper()
@@ -158,6 +225,13 @@ async def main():
         )
     except Exception as e:
         print(f"❌ Telnyx Provisioning failed: {e}")
+        return
+
+    # Provision/retrieve Credential Connection for Outbound Calls
+    try:
+        username, password = await setup_telnyx_credential_connection(api_key=telnyx_api_key)
+    except Exception as e:
+        print(f"❌ Telnyx Credential Connection setup failed: {e}")
         return
 
     # 3. Setup LiveKit Inbound SIP Trunk & Dispatch Rule
@@ -205,7 +279,7 @@ async def main():
                 )
             )
             room_config = api.RoomConfiguration(
-                agents=[api.RoomAgentDispatch(agent_name="outbound-caller")]
+                agents=[api.RoomAgentDispatch(agent_name="inbound-caller")]
             )
             req = api.CreateSIPDispatchRuleRequest(
                 name=f"Telnyx Route - {market}",
@@ -222,8 +296,8 @@ async def main():
             await sip.update_outbound_trunk_fields(
                 outbound_trunk_id,
                 address="sip.telnyx.com",
-                auth_username="",
-                auth_password="",
+                auth_username=username,
+                auth_password=password,
                 numbers=[phone_number],
             )
             print("✅ Outbound SIP Trunk updated.")
@@ -232,12 +306,15 @@ async def main():
             outbound_config = api.SIPOutboundTrunkInfo(
                 name=f"Telnyx Outbound - {market}",
                 address="sip.telnyx.com",
-                numbers=[phone_number]
+                numbers=[phone_number],
+                auth_username=username,
+                auth_password=password,
             )
             outbound_req = api.CreateSIPOutboundTrunkRequest(trunk=outbound_config)
             out_trunk = await sip.create_sip_outbound_trunk(outbound_req)
             print(f"Created Outbound SIP Trunk ID: {out_trunk.sip_trunk_id}")
             print(f"IMPORTANT: Please add 'TELNYX_SIP_TRUNK_ID={out_trunk.sip_trunk_id}' to your .env file.")
+            print(f"IMPORTANT: Please add 'TELNYX_SIP_USERNAME={username}' and 'TELNYX_SIP_PASSWORD={password}' to your .env file.")
 
         print("\n✅ Setup complete! Telnyx and LiveKit are configured.")
 

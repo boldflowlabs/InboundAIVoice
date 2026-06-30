@@ -18,7 +18,7 @@ def get_cal_creds() -> dict:
 
 # ─── Cal.com: Get available slots ─────────────────────────────────────────────
 
-def get_available_slots(date_str: str) -> list:
+def get_available_slots(date_str: str, timezone_name: str = "America/New_York") -> list:
     """
     Fetch open slots for a given date from Cal.com OR Google Calendar,
     depending on which is configured.
@@ -29,15 +29,15 @@ def get_available_slots(date_str: str) -> list:
     gcal_creds = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE", "google_creds.json")
     if gcal_id and os.path.exists(gcal_creds):
         try:
-            return _get_slots_gcal(date_str, gcal_id, gcal_creds)
+            return _get_slots_gcal(date_str, gcal_id, gcal_creds, timezone_name)
         except Exception as e:
             logger.warning(f"[GCAL] Falling back to Cal.com: {e}")
 
     # Default: Cal.com
-    return _get_slots_calcom(date_str)
+    return _get_slots_calcom(date_str, timezone_name)
 
 
-def _get_slots_calcom(date_str: str) -> list:
+def _get_slots_calcom(date_str: str, timezone_name: str = "America/New_York") -> list:
     creds = get_cal_creds()
     try:
         resp = requests.get(
@@ -53,10 +53,21 @@ def _get_slots_calcom(date_str: str) -> list:
         )
         resp.raise_for_status()
         raw_slots = resp.json().get("data", {}).get("slots", {}).get(date_str, [])
+        
+        import pytz
+        try:
+            tz = pytz.timezone(timezone_name)
+        except Exception:
+            tz = pytz.timezone("America/New_York")
+
         slots = []
         for s in raw_slots:
-            dt = datetime.fromisoformat(s["time"])
-            slots.append({"time": s["time"], "label": dt.strftime("%-I:%M %p")})
+            dt = datetime.fromisoformat(s["time"].replace("Z", "+00:00"))
+            dt_tz = dt.astimezone(tz)
+            formatted_time = dt_tz.strftime("%I:%M %p")
+            if formatted_time.startswith("0"):
+                formatted_time = formatted_time[1:]
+            slots.append({"time": s["time"], "label": formatted_time})
         logger.info(f"[CAL] {len(slots)} slots for {date_str}")
         return slots
     except Exception as e:
@@ -64,7 +75,7 @@ def _get_slots_calcom(date_str: str) -> list:
         return []
 
 
-def _get_slots_gcal(date_str: str, calendar_id: str, creds_file: str) -> list:
+def _get_slots_gcal(date_str: str, calendar_id: str, creds_file: str, timezone_name: str = "America/New_York") -> list:
     """
     Fetch busy slots from Google Calendar and compute free windows (#36).
     Requires: google-api-python-client, google-auth
@@ -72,14 +83,21 @@ def _get_slots_gcal(date_str: str, calendar_id: str, creds_file: str) -> list:
     from googleapiclient.discovery import build
     from google.oauth2 import service_account
 
+    import pytz
+    from datetime import timedelta
+    try:
+        tz = pytz.timezone(timezone_name)
+    except Exception:
+        tz = pytz.timezone("America/New_York")
+
     creds = service_account.Credentials.from_service_account_file(
         creds_file,
         scopes=["https://www.googleapis.com/auth/calendar.readonly"],
     )
     service = build("calendar", "v3", credentials=creds)
 
-    start = f"{date_str}T00:00:00+05:30"
-    end   = f"{date_str}T23:59:59+05:30"
+    start = tz.localize(datetime.strptime(f"{date_str} 00:00:00", "%Y-%m-%d %H:%M:%S")).isoformat()
+    end   = tz.localize(datetime.strptime(f"{date_str} 23:59:59", "%Y-%m-%d %H:%M:%S")).isoformat()
 
     result = service.freebusy().query(body={
         "timeMin": start,
@@ -89,17 +107,14 @@ def _get_slots_gcal(date_str: str, calendar_id: str, creds_file: str) -> list:
 
     busy_slots = result.get("calendars", {}).get(calendar_id, {}).get("busy", [])
 
-    # Generate free 30-min slots between 10:00 and 19:00 IST
-    import pytz
-    from datetime import timedelta
-    ist = pytz.timezone("Asia/Kolkata")
-    day_start = ist.localize(datetime.strptime(f"{date_str} 10:00", "%Y-%m-%d %H:%M"))
-    day_end   = ist.localize(datetime.strptime(f"{date_str} 19:00", "%Y-%m-%d %H:%M"))
+    # Generate free 30-min slots between 10:00 and 19:00 in target timezone
+    day_start = tz.localize(datetime.strptime(f"{date_str} 10:00", "%Y-%m-%d %H:%M"))
+    day_end   = tz.localize(datetime.strptime(f"{date_str} 19:00", "%Y-%m-%d %H:%M"))
 
     busy_ranges = []
     for b in busy_slots:
-        bs = datetime.fromisoformat(b["start"]).astimezone(ist)
-        be = datetime.fromisoformat(b["end"]).astimezone(ist)
+        bs = datetime.fromisoformat(b["start"].replace("Z", "+00:00")).astimezone(tz)
+        be = datetime.fromisoformat(b["end"].replace("Z", "+00:00")).astimezone(tz)
         busy_ranges.append((bs, be))
 
     free_slots = []
@@ -108,9 +123,12 @@ def _get_slots_gcal(date_str: str, calendar_id: str, creds_file: str) -> list:
         slot_end = slot + timedelta(minutes=30)
         is_busy = any(bs <= slot < be for bs, be in busy_ranges)
         if not is_busy:
+            formatted_time = slot.strftime("%I:%M %p")
+            if formatted_time.startswith("0"):
+                formatted_time = formatted_time[1:]
             free_slots.append({
                 "time":  slot.isoformat(),
-                "label": slot.strftime("%-I:%M %p"),
+                "label": formatted_time,
             })
         slot = slot_end
 
@@ -125,15 +143,16 @@ def create_booking(
     caller_name: str,
     caller_phone: str,
     notes: str = "",
+    timezone_name: str = "America/New_York",
 ) -> dict:
     """Synchronous wrapper — calls async_create_booking."""
     import asyncio
     try:
         return asyncio.get_event_loop().run_until_complete(
-            async_create_booking(start_time, caller_name, caller_phone, notes)
+            async_create_booking(start_time, caller_name, caller_phone, notes, timezone_name)
         )
     except RuntimeError:
-        return asyncio.run(async_create_booking(start_time, caller_name, caller_phone, notes))
+        return asyncio.run(async_create_booking(start_time, caller_name, caller_phone, notes, timezone_name))
 
 
 async def async_create_booking(
@@ -141,23 +160,24 @@ async def async_create_booking(
     caller_name: str,
     caller_phone: str,
     notes: str = "",
+    timezone_name: str = "America/New_York",
 ) -> dict:
     """
     Book a slot — uses Google Calendar if configured, else Cal.com v2.
-    start_time: ISO 8601 with IST offset e.g. "2026-02-24T10:00:00+05:30"
+    start_time: ISO 8601 with offset
     Returns: {"success": bool, "booking_id": str|None, "message": str}
     """
     gcal_id    = os.environ.get("GOOGLE_CALENDAR_ID", "")
     gcal_creds = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE", "google_creds.json")
 
     if gcal_id and os.path.exists(gcal_creds):
-        return await _create_booking_gcal(start_time, caller_name, caller_phone, notes, gcal_id, gcal_creds)
+        return await _create_booking_gcal(start_time, caller_name, caller_phone, notes, gcal_id, gcal_creds, timezone_name)
 
-    return await _create_booking_calcom(start_time, caller_name, caller_phone, notes)
+    return await _create_booking_calcom(start_time, caller_name, caller_phone, notes, timezone_name)
 
 
 async def _create_booking_calcom(
-    start_time: str, caller_name: str, caller_phone: str, notes: str
+    start_time: str, caller_name: str, caller_phone: str, notes: str, timezone_name: str = "America/New_York"
 ) -> dict:
     creds = get_cal_creds()
     payload = {
@@ -167,7 +187,7 @@ async def _create_booking_calcom(
             "name":        caller_name,
             "email":       f"{caller_phone.replace('+','').replace(' ','')}@voiceagent.placeholder",
             "phoneNumber": caller_phone,
-            "timeZone":    "Asia/Kolkata",
+            "timeZone":    timezone_name,
             "language":    "en",
         },
         "bookingFieldsResponses": {
@@ -205,6 +225,7 @@ async def _create_booking_gcal(
     notes: str,
     calendar_id: str,
     creds_file: str,
+    timezone_name: str = "America/New_York",
 ) -> dict:
     """Create a Google Calendar event (#36)."""
     try:
@@ -218,14 +239,14 @@ async def _create_booking_gcal(
         )
         service = build("calendar", "v3", credentials=creds)
 
-        dt_start = datetime.fromisoformat(start_time)
+        dt_start = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
         dt_end   = dt_start + timedelta(minutes=30)
 
         event = {
             "summary":     f"Appointment — {caller_name}",
             "description": f"Phone: {caller_phone}\nNotes: {notes}\nBooked via BoldFlow AI Voice Agent",
-            "start":       {"dateTime": dt_start.isoformat(), "timeZone": "Asia/Kolkata"},
-            "end":         {"dateTime": dt_end.isoformat(),   "timeZone": "Asia/Kolkata"},
+            "start":       {"dateTime": dt_start.isoformat(), "timeZone": timezone_name},
+            "end":         {"dateTime": dt_end.isoformat(),   "timeZone": timezone_name},
             "attendees":   [{"displayName": caller_name, "comment": caller_phone}],
         }
 

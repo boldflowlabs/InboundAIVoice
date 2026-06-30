@@ -43,8 +43,6 @@ livekit==1.1.2
 livekit-agents==1.4.2
 livekit-api==1.1.0
 livekit-blingfire==1.1.0
-livekit-plugins-deepgram==1.4.2
-livekit-plugins-elevenlabs==1.4.2
 livekit-plugins-noise-cancellation==0.2.5
 livekit-plugins-google>=1.4.0
 livekit-plugins-silero==1.4.2

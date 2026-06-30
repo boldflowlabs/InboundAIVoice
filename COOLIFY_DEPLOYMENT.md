@@ -5,7 +5,7 @@ This guide explains how to deploy your AI voice agent (`agent.py`) onto a **Cool
 ## Prerequisites
 1. A running **Coolify** instance (either self-hosted or Cloud).
 2. A GitHub/GitLab repository containing this project code.
-3. All your API keys ready (LiveKit, Sarvam, Telegram, Cal.com, OpenAI, Vobiz).
+3. All your API keys ready (LiveKit, Google Gemini, Telegram, Cal.com, Telnyx).
 
 ---
 
@@ -41,17 +41,17 @@ Before deploying, you must inject your credentials!
     - `LIVEKIT_URL`
     - `LIVEKIT_API_KEY`
     - `LIVEKIT_API_SECRET`
-    - `OPENAI_API_KEY`
-    - `SARVAM_API_KEY`
-    - `SIP_TRUNK_ID`
+    - `LIVEKIT_SIP_DOMAIN`
+    - `GOOGLE_API_KEY`
+    - `TELNYX_API_KEY`
+    - `TELNYX_SIP_TRUNK_ID`
+    - `TELNYX_OUTBOUND_NUMBER`
     - `CAL_API_KEY`
     - `CAL_EVENT_TYPE_ID`
     - `TELEGRAM_BOT_TOKEN`
     - `TELEGRAM_CHAT_ID`
-    - `VOBIZ_SIP_DOMAIN`
-    - `VOBIZ_USERNAME`
-    - `VOBIZ_PASSWORD`
-    - `VOBIZ_OUTBOUND_NUMBER`
+    - `AGENT_TIMEZONE` (optional)
+    - `DEPLOYMENT_MARKET` (optional)
 
 ---
 
@@ -68,8 +68,8 @@ Before deploying, you must inject your credentials!
 Python handles I/O operations (like waiting for network requests or WebSockets) exceptionally well using `asyncio`, which this LiveKit agent uses under the hood.
 
 - **Soft Limit (Single Container):** A single container with 1 CPU core and 1GB of RAM can easily handle **20 to 50 concurrent active voice calls**. 
-- **Why?** The heavy lifting (Speech to Text, LLM thinking, Text to Speech) is all outsourced to Sarvam and OpenAI APIs. Your server is merely a lightweight router passing text strings and audio buffers back and forth. 
-- **Hard Limit:** The real bottleneck will be the LiveKit Cloud rate limits or OpenAI/Sarvam API concurrency limits on your specific tier before your actual Coolify server breaks.
+- **Why?** The heavy lifting (Speech to Text, LLM thinking, Text to Speech) is all outsourced to the Gemini Live API. Your server is merely a lightweight router passing audio streams back and forth. 
+- **Hard Limit:** The real bottleneck will be the LiveKit Cloud rate limits or Gemini API concurrency limits on your specific tier before your actual Coolify server breaks.
 
 ---
 
@@ -97,7 +97,7 @@ To run both `agent.py` and `ui_server.py` at the same time on Coolify, we use a 
 ### Step 4: Add Environment Variables
 1. Go to the **Environment Variables** tab.
 2. Copy every key-value pair from your `.env` file and paste them into Coolify. 
-3. Required variables include: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `OPENAI_API_KEY`, `SARVAM_API_KEY`, `SIP_TRUNK_ID`, `CAL_API_KEY`, `TELEGRAM_BOT_TOKEN`, etc.
+3. Required variables include: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `GOOGLE_API_KEY`, `TELNYX_API_KEY`, `TELNYX_SIP_TRUNK_ID`, `CAL_API_KEY`, `TELEGRAM_BOT_TOKEN`, etc.
 
 ### Step 5: Deploy
 1. Click the **Deploy** button.

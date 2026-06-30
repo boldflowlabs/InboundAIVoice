@@ -141,12 +141,35 @@ def count_tokens(text: str) -> int:
     except Exception:
         return len(text.split())
 
-# ── IST time context ──────────────────────────────────────────────────────────
-def get_ist_time_context() -> str:
-    ist = pytz.timezone("Asia/Kolkata")
-    now = datetime.now(ist)
+# ── Timezone and context helper ──────────────────────────────────────────────
+def get_agent_timezone(live_config: dict | None = None) -> str:
+    tz_env = os.getenv("AGENT_TIMEZONE") or os.getenv("TIMEZONE")
+    if tz_env:
+        return tz_env
+    if live_config and live_config.get("timezone"):
+        return live_config.get("timezone")
+    market = os.getenv("DEPLOYMENT_MARKET", "US").upper()
+    market_timezones = {
+        "US": "America/New_York",
+        "UK": "Europe/London",
+        "CA": "America/Toronto",
+        "AU": "Australia/Sydney",
+        "AE": "Asia/Dubai",
+        "IN": "Asia/Kolkata"
+    }
+    return market_timezones.get(market, "America/New_York")
+
+def get_time_context(timezone_name: str) -> str:
+    try:
+        tz = pytz.timezone(timezone_name)
+    except Exception:
+        tz = pytz.timezone("America/New_York")
+    now = datetime.now(tz)
+    tz_abbr = now.tzname() or "EST"
     today_str = now.strftime("%A, %B %d, %Y")
-    time_str  = now.strftime("%I:%M %p")
+    time_str = now.strftime("%I:%M %p")
+    if time_str.startswith("0"):
+        time_str = time_str[1:]
     days_lines = []
     for i in range(7):
         day   = now + timedelta(days=i)
@@ -155,28 +178,39 @@ def get_ist_time_context() -> str:
     days_block = "\n".join(days_lines)
     return (
         f"\n\n[SYSTEM CONTEXT]\n"
-        f"Current date & time: {today_str} at {time_str} IST\n"
+        f"Current date & time: {today_str} at {time_str} {tz_abbr}\n"
         f"Resolve ALL relative day references using this table:\n{days_block}\n"
-        f"Always use ISO dates when calling save_booking_intent. Appointments in IST (+05:30).]"
+        f"Always use ISO dates when calling save_booking_intent. Appointments in {tz_abbr} ({timezone_name}).]"
     )
 
 # ── Language presets ──────────────────────────────────────────────────────────
 LANGUAGE_PRESETS = {
+    # New International Presets
+    "english_us":   {"label": "English (US)",            "tts_language": "en-US", "tts_voice": "Aoede",  "instruction": "Speak only in American English with a warm, professional tone."},
+    "english_uk":   {"label": "English (UK)",            "tts_language": "en-GB", "tts_voice": "Aoede",  "instruction": "Speak only in British English with a warm, professional tone."},
+    "english_ca":   {"label": "English (Canada)",        "tts_language": "en-CA", "tts_voice": "Aoede",  "instruction": "Speak only in Canadian English with a warm, professional tone."},
+    "english_au":   {"label": "English (Australia)",     "tts_language": "en-AU", "tts_voice": "Aoede",  "instruction": "Speak only in Australian English with a warm, professional tone."},
+    "arabic_ae":    {"label": "Arabic (UAE)",            "tts_language": "ar-AE", "tts_voice": "Aoede",  "instruction": "Speak only in clear, polite UAE Arabic."},
+    "spanish":      {"label": "Spanish",                 "tts_language": "es-ES", "tts_voice": "Aoede",  "instruction": "Speak only in clear, polite Spanish."},
+
+    # Existing Presets
+    "english":     {"label": "English (US)",            "tts_language": "en-US", "tts_voice": "Aoede",  "instruction": "Speak only in US English with a warm, professional tone."},
     "hinglish":    {"label": "Hinglish (Hindi+English)", "tts_language": "hi-IN", "tts_voice": "Aoede",  "instruction": "Speak in natural Hinglish — mix Hindi and English. Default to Hindi but use English words when more natural."},
-    "hindi":       {"label": "Hindi",                   "tts_language": "hi-IN", "tts_voice": "Aoede",   "instruction": "Speak only in pure Hindi. Avoid English words wherever a Hindi equivalent exists."},
-    "english":     {"label": "English (India)",         "tts_language": "en-IN", "tts_voice": "Aoede",  "instruction": "Speak only in Indian English with a warm, professional tone."},
+    "hindi":       {"label": "Hindi",                   "tts_language": "hi-IN", "tts_voice": "Aoede",  "instruction": "Speak only in pure Hindi. Avoid English words wherever a Hindi equivalent exists."},
     "tamil":       {"label": "Tamil",                   "tts_language": "ta-IN", "tts_voice": "Aoede",  "instruction": "Speak only in Tamil. Use standard spoken Tamil for a professional context."},
     "telugu":      {"label": "Telugu",                  "tts_language": "te-IN", "tts_voice": "Aoede",  "instruction": "Speak only in Telugu. Use clear, polite spoken Telugu."},
     "gujarati":    {"label": "Gujarati",                "tts_language": "gu-IN", "tts_voice": "Aoede",  "instruction": "Speak only in Gujarati. Use polite, professional Gujarati."},
-    "bengali":     {"label": "Bengali",                 "tts_language": "bn-IN", "tts_voice": "Aoede",   "instruction": "Speak only in Bengali (Bangla). Use standard, polite spoken Bengali."},
+    "bengali":     {"label": "Bengali",                 "tts_language": "bn-IN", "tts_voice": "Aoede",  "instruction": "Speak only in Bengali (Bangla). Use standard, polite spoken Bengali."},
     "marathi":     {"label": "Marathi",                 "tts_language": "mr-IN", "tts_voice": "Aoede",  "instruction": "Speak only in Marathi. Use polite, standard spoken Marathi."},
     "kannada":     {"label": "Kannada",                 "tts_language": "kn-IN", "tts_voice": "Aoede",  "instruction": "Speak only in Kannada. Use clear, professional spoken Kannada."},
-    "malayalam":   {"label": "Malayalam",               "tts_language": "ml-IN", "tts_voice": "Aoede",   "instruction": "Speak only in Malayalam. Use polite, professional spoken Malayalam."},
-    "multilingual":{"label": "Multilingual (Auto)",     "tts_language": "hi-IN", "tts_voice": "Aoede",  "instruction": "Detect the caller's language from their first message and reply in that SAME language for the entire call. Supported: Hindi, Hinglish, English, Tamil, Telugu, Gujarati, Bengali, Marathi, Kannada, Malayalam. Switch if caller switches."},
+    "malayalam":   {"label": "Malayalam",               "tts_language": "ml-IN", "tts_voice": "Aoede",  "instruction": "Speak only in Malayalam. Use polite, professional spoken Malayalam."},
+    
+    # Updated Multilingual fallback
+    "multilingual":{"label": "Multilingual (Auto)",     "tts_language": "en-US", "tts_voice": "Aoede",  "instruction": "Detect the caller's language from their first message and reply in that SAME language for the entire call. Supported: English, Spanish, Arabic, French, Hindi. Default to English if unsure. Switch if caller switches."},
 }
 
 def get_language_instruction(lang_preset: str) -> str:
-    preset = LANGUAGE_PRESETS.get(lang_preset, LANGUAGE_PRESETS["multilingual"])
+    preset = LANGUAGE_PRESETS.get(lang_preset, LANGUAGE_PRESETS["english"])
     return f"\n\n[LANGUAGE DIRECTIVE]\n{preset['instruction']}"
 
 # ── External imports ──────────────────────────────────────────────────────────
@@ -195,10 +229,11 @@ from notify import (
 
 class AgentTools(llm.ToolContext):
 
-    def __init__(self, caller_phone: str, caller_name: str = ""):
+    def __init__(self, caller_phone: str, caller_name: str = "", timezone_name: str = "America/New_York"):
         super().__init__(tools=[])
         self.caller_phone        = caller_phone
         self.caller_name         = caller_name
+        self.timezone            = timezone_name
         self.booking_intent: dict | None = None
         self.sip_domain          = os.getenv("TELNYX_SIP_DOMAIN", "sip.telnyx.com")
         self.ctx_api             = None
@@ -237,16 +272,22 @@ class AgentTools(llm.ToolContext):
         logger.info("[TOOL] end_call triggered — hanging up.")
         try:
             if self.ctx_api and self.room_name and self._sip_identity:
-                await self.ctx_api.sip.transfer_sip_participant(
-                    api.TransferSIPParticipantRequest(
-                        room_name=self.room_name,
-                        participant_identity=self._sip_identity,
-                        transfer_to="tel:+00000000",
-                        play_dialtone=False,
+                # Directly remove participant from room
+                await self.ctx_api.room.remove_participant(
+                    api.RemoveParticipantRequest(
+                        room=self.room_name,
+                        identity=self._sip_identity,
                     )
                 )
         except Exception as e:
-            logger.warning(f"[END-CALL] SIP hangup failed: {e}")
+            logger.warning(f"[END-CALL] remove_participant failed, trying delete_room: {e}")
+            try:
+                if self.ctx_api and self.room_name:
+                    await self.ctx_api.room.delete_room(
+                        api.DeleteRoomRequest(room=self.room_name)
+                    )
+            except Exception as ex:
+                logger.warning(f"[END-CALL] delete_room failed: {ex}")
         return "Call ended."
 
     # ── Tool: Save Booking Intent ─────────────────────────────────────────
@@ -280,11 +321,16 @@ class AgentTools(llm.ToolContext):
     ) -> str:
         logger.info(f"[TOOL] check_availability: date={date}")
         try:
-            slots = await get_available_slots(date)
+            slots = await get_available_slots(date, timezone_name=self.timezone)
             if not slots:
                 return f"No available slots on {date}. Would you like to check another date?"
-            slot_strings = [s.get("start_time", str(s))[-8:][:5] for s in slots[:6]]
-            return f"Available slots on {date}: {', '.join(slot_strings)} IST."
+            try:
+                tz = pytz.timezone(self.timezone)
+                tz_abbr = datetime.now(tz).tzname() or "EST"
+            except Exception:
+                tz_abbr = "EST"
+            slot_labels = [s.get("label", str(s)) for s in slots[:6]]
+            return f"Available slots on {date}: {', '.join(slot_labels)} {tz_abbr}."
         except Exception as e:
             logger.error(f"[TOOL] check_availability failed: {e}")
             return "I'm having trouble checking the calendar right now."
@@ -292,8 +338,12 @@ class AgentTools(llm.ToolContext):
     # ── Tool: Business Hours ────────────────────────────────────────
     @llm.function_tool(description="Check if the business is currently open and what the operating hours are.")
     async def get_business_hours(self) -> str:
-        ist  = pytz.timezone("Asia/Kolkata")
-        now  = datetime.now(ist)
+        try:
+            tz = pytz.timezone(self.timezone)
+        except Exception:
+            tz = pytz.timezone("America/New_York")
+        now  = datetime.now(tz)
+        tz_abbr = now.tzname() or "EST"
         hours = {
             0: ("Monday",    "10:00", "19:00"),
             1: ("Tuesday",   "10:00", "19:00"),
@@ -306,10 +356,10 @@ class AgentTools(llm.ToolContext):
         day_name, open_t, close_t = hours[now.weekday()]
         current_time = now.strftime("%H:%M")
         if open_t is None:
-            return "We are closed on Sundays. Next opening: Monday 10:00 AM IST."
+            return f"We are closed on Sundays. Next opening: Monday 10:00 AM {tz_abbr}."
         if open_t <= current_time <= close_t:
-            return f"We are OPEN. Today ({day_name}): {open_t}–{close_t} IST."
-        return f"We are CLOSED. Today ({day_name}): {open_t}–{close_t} IST."
+            return f"We are OPEN. Today ({day_name}): {open_t}–{close_t} {tz_abbr}."
+        return f"We are CLOSED. Today ({day_name}): {open_t}–{close_t} {tz_abbr}."
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -325,10 +375,11 @@ class OutboundAssistant(Agent):
         live_config_loaded = self._live_config
 
         base_instructions = live_config_loaded.get("agent_instructions", "")
-        ist_context       = get_ist_time_context()
+        tz_name           = get_agent_timezone(live_config_loaded)
+        time_context      = get_time_context(tz_name)
         lang_preset       = live_config_loaded.get("lang_preset", "multilingual")
         lang_instruction  = get_language_instruction(lang_preset)
-        final_instructions = base_instructions + ist_context + lang_instruction
+        final_instructions = base_instructions + time_context + lang_instruction
 
         # Token counter
         token_count = count_tokens(final_instructions)
@@ -371,7 +422,10 @@ async def entrypoint(ctx: JobContext):
             pass
 
     # Extract from SIP participants
+    first_remote_identity = None
     for identity, participant in ctx.room.remote_participants.items():
+        if not first_remote_identity:
+            first_remote_identity = identity
         if participant.name and participant.name not in ("", "Caller", "Unknown"):
             caller_name = participant.name
             logger.info(f"[CALLER-ID] Name from SIP: {caller_name}")
@@ -393,6 +447,7 @@ async def entrypoint(ctx: JobContext):
 
     # ── Load config ───────────────────────────────────────────────────────
     live_config   = get_live_config(caller_phone)
+    tz_name       = get_agent_timezone(live_config)
     delay_setting = live_config.get("stt_min_endpointing_delay", 0.05)
     llm_model     = live_config.get("llm_model", "gemini-2.5-flash")
     tts_voice     = live_config.get("tts_voice", "Aoede")
@@ -433,8 +488,8 @@ async def entrypoint(ctx: JobContext):
         live_config["agent_instructions"] = (live_config.get("agent_instructions","") + caller_history)
 
     # ── Instantiate tools ─────────────────────────────────────────────────
-    agent_tools = AgentTools(caller_phone=caller_phone, caller_name=caller_name)
-    agent_tools._sip_identity = (
+    agent_tools = AgentTools(caller_phone=caller_phone, caller_name=caller_name, timezone_name=tz_name)
+    agent_tools._sip_identity = first_remote_identity or (
         f"sip_{caller_phone.replace('+','')}" if phone_number else "inbound_caller"
     )
     agent_tools.ctx_api   = ctx.api
@@ -508,7 +563,7 @@ async def entrypoint(ctx: JobContext):
                         access_key=os.environ["SUPABASE_S3_ACCESS_KEY"],
                         secret=os.environ["SUPABASE_S3_SECRET_KEY"],
                         bucket="call-recordings",
-                        region=os.environ.get("SUPABASE_S3_REGION", "ap-south-1"),
+                        region=os.environ.get("SUPABASE_S3_REGION", "us-east-1"),
                         endpoint=os.environ["SUPABASE_S3_ENDPOINT"],
                         force_path_style=True,
                     )
@@ -629,6 +684,7 @@ async def entrypoint(ctx: JobContext):
                 caller_name=intent["caller_name"] or "Unknown Caller",
                 caller_phone=intent["caller_phone"],
                 notes=intent["notes"],
+                timezone_name=tz_name,
             )
             if result.get("success"):
                 notify_booking_confirmed(
@@ -639,6 +695,7 @@ async def entrypoint(ctx: JobContext):
                     notes=intent["notes"],
                     tts_voice=tts_voice,
                     ai_summary="",
+                    timezone_name=tz_name,
                 )
                 booking_status_msg = f"Booking Confirmed: {result.get('booking_id')}"
             else:
@@ -701,20 +758,23 @@ async def entrypoint(ctx: JobContext):
                     logger.warning(f"[SENTIMENT] Failed: {e}")
 
         # Cost estimation
-        def estimate_cost(dur: int, chars: int) -> float:
-            return round(
-                (dur / 60) * 0.002 +
-                (dur / 60) * 0.006 +
-                (chars / 1000) * 0.003 +
-                (chars / 4000) * 0.0001,
-                5
-            )
-        estimated_cost = estimate_cost(duration, len(transcript_text))
+        def estimate_cost(dur: int) -> float:
+            # Gemini Live API cost:
+            # - Audio Input (User streams constantly): $0.0025 / min
+            # - Audio Output (Agent speaks ~40% of the time): $0.0075 / min * 0.4 = $0.003 / min
+            # Telnyx Telephony SIP cost: $0.006 / min
+            # LiveKit Cloud (WebRTC + Egress): $0.002 / min
+            # Total per-minute cost: $0.0135
+            return round((dur / 60) * 0.0135, 5)
+        estimated_cost = estimate_cost(duration)
         logger.info(f"[COST] Estimated: ${estimated_cost}")
 
         # Analytics timestamps
-        ist = pytz.timezone("Asia/Kolkata")
-        call_dt = call_start_time.astimezone(ist)
+        try:
+            tz = pytz.timezone(tz_name)
+        except Exception:
+            tz = pytz.timezone("America/New_York")
+        call_dt = call_start_time.astimezone(tz)
 
         # Stop recording
         recording_url = ""
@@ -785,5 +845,5 @@ async def entrypoint(ctx: JobContext):
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(
         entrypoint_fnc=entrypoint,
-        agent_name="outbound-caller",
+        agent_name="inbound-caller",
     ))
